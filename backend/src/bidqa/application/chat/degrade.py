@@ -11,7 +11,7 @@ import time
 from typing import Any, Callable
 
 from bidqa.agent.loop import LoopResult
-from bidqa.agent.prompts import RAG_DIRECT_SYSTEM, RAG_DIRECT_SYSTEM_EN_SUFFIX
+from bidqa.agent.prompts import build_rag_direct_messages
 from bidqa.application.vision import image_context_block
 from bidqa.clients.chat_factory import build_chat_for
 from bidqa.clients.siliconflow import DataSourceError
@@ -36,22 +36,12 @@ def direct_rag_answer(question: str, lang: str, image_refs: list[str],
         raise DataSourceError("chat", "降级路径不可用")
     result = retriever.retrieve(question)
     retrieve_ms = int((time.perf_counter() - t0) * 1000)
-    blocks = "\n\n".join(f"[{i + 1}] ({h.source_type}) {h.title}\n{h.text}"
-                         for i, h in enumerate(result.hits))
     image_block = image_context_block(image_refs)  # 降级路径同样带图片上下文
     answer = ("The knowledge base does not cover this content." if lang == "en"
               else "知识库未包含相关内容。")
     if result.hits:
-        user_content = f"【检索材料】\n{blocks}\n\n【问题】{question}"
-        if image_block:
-            user_content = f"{user_content}\n\n{image_block}"
-        system_prompt = RAG_DIRECT_SYSTEM
-        if lang == "en":
-            system_prompt += RAG_DIRECT_SYSTEM_EN_SUFFIX
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ]
+        messages = build_rag_direct_messages(result.hits, question, lang=lang,
+                                             extra_user_suffix=image_block)
         parts: list[str] = []
         try:
             for chunk in chat.chat_stream(messages):

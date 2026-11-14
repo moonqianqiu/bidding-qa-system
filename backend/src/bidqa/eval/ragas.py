@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from bidqa.agent.prompts import build_rag_direct_messages, rag_direct_blocks
 from bidqa.clients.llm import ChatClient
 from bidqa.eval.agent_eval import (
     RESULTS_DIR,
@@ -94,14 +95,8 @@ def run_rag_eval(golden_path: str, retriever: Retriever, chat: ChatClient,
             retrieval = retriever.retrieve(question)
             # 自行计时：retrieval.elapsed_ms 是首次检索耗时，缓存命中时是旧值。
             retrieve_ms = int((time.perf_counter() - t0) * 1000)
-            blocks = "\n\n".join(
-                f"[{i + 1}] ({h.source_type}) {h.title}\n{h.text}"
-                for i, h in enumerate(retrieval.hits))
-            answer = chat.chat([
-                {"role": "system", "content": "你是招投标领域问答助手。只依据【检索材料】作答；"
-                                              "未覆盖回答「知识库未包含」。引用标注 [n]。"},
-                {"role": "user", "content": f"【检索材料】\n{blocks}\n\n【问题】{question}"},
-            ])
+            blocks = rag_direct_blocks(retrieval.hits)
+            answer = chat.chat(build_rag_direct_messages(retrieval.hits, question))
         except Exception as exc:
             failed.append({"id": case["id"], "question": question,
                            "error": f"{type(exc).__name__}: {exc}"})

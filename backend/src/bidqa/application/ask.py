@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from bidqa.agent.prompts import RAG_DIRECT_SYSTEM
+from bidqa.agent.prompts import build_rag_direct_messages
 from bidqa.clients.chat_factory import build_chat
 from bidqa.rag.crag import crag_retrieve
 from bidqa.rag.factory import build_retriever
@@ -20,14 +20,7 @@ class AskUnavailable(Exception):
 
 
 def _build_messages(question: str, result) -> list[dict]:
-    blocks = "\n\n".join(
-        f"[{i + 1}] ({h.source_type}) {h.title}\n{h.text}"
-        for i, h in enumerate(result.hits)
-    )
-    return [
-        {"role": "system", "content": RAG_DIRECT_SYSTEM},
-        {"role": "user", "content": f"【检索材料】\n{blocks}\n\n【问题】{question}"},
-    ]
+    return build_rag_direct_messages(result.hits, question)
 
 
 def ask_direct(question: str, top_k: int) -> dict:
