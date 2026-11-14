@@ -36,8 +36,12 @@ class SseChannel:
         self.queue: Queue = Queue()
         self.ping_interval = ping_interval
 
-    def emit(self, kind: str, payload: dict[str, Any]) -> None:
-        """工作线程侧投递（AgentLoop on_event 回调直通）。"""
+    def emit(self, kind: str, payload: Any) -> None:
+        """工作线程侧投递（AgentLoop on_event 回调直通）。
+
+        payload：业务事件为 dict；内部信号 `_result` 携带 JobOutcome（编排产出，
+        lines() 侧经 build_done_event 转协议）——通道是内部约定信号，不做窄类型。
+        """
         self.queue.put((kind, payload))
 
     def lines(self, t0: float,
