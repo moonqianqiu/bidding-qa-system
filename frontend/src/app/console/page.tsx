@@ -1,118 +1,24 @@
 "use client";
 
-// A15 控制台（KPI 仪表盘布局，docs/02）：KPI 行 7 卡 + 双栏（服务健康｜运行时）
-// +（数据规模｜日志 5s 轮询）+ 管理员动作区 + 深链行。
-// 数据：/api/system/console（30s 后端缓存）+ /api/health + /api/system/metrics；
-// 30s 自动刷新 + 手动 ↻；403（非 admin）→ 页内提示态（门禁在服务端，藏入口只是体验）。
+// A15 控制台（KPI 仪表盘布局，docs/02）——布局组装（C7 拆分后）：
+// 数据轮询 useConsoleData（features/console）、「不可用」剥离与格式化 format.ts、
+// 管理员动作区组件 features/console/{UserAdmin,GuestToggle,ConversationAdmin}。
+// 30s 自动刷新 + 手动 ↻；403（非 admin）→ 页内提示态。
 // 全语义 token（bg-base/bg-panel/border-line/text-fg…）——不硬编码 zinc（eval 页反例）。
 
-import { useCallback, useEffect, useState } from "react";
-import {
-  ApiError,
-  getConsoleStats,
-  getHealth,
-  getLogs,
-  getMe,
-  getMetrics,
-  type ConsoleStats,
-  type Health,
-  type LogEntry,
-  type Metrics,
-} from "@/lib/api";
-import { getUser } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
-import ConversationAdmin from "@/components/console/ConversationAdmin";
-import GuestToggle from "@/components/console/GuestToggle";
-import UserAdmin from "@/components/console/UserAdmin";
-
-/** 「不可用」节剥离：{status:"不可用"} → null，可用 → 数据形状（KPI/规模区共用）。 */
-type PgStats = Extract<ConsoleStats["pg"], { bidding_procurement: number }>;
-type QdStats = Extract<ConsoleStats["qdrant"], { vectors: number }>;
-type NeoStats = Extract<ConsoleStats["neo4j"], { total: number }>;
-
-function availPg(v: ConsoleStats["pg"] | undefined): PgStats | null {
-  return v && !("status" in v) ? v : null;
-}
-
-function availQd(v: ConsoleStats["qdrant"] | undefined): QdStats | null {
-  return v && !("status" in v) ? v : null;
-}
-
-function availNeo(v: ConsoleStats["neo4j"] | undefined): NeoStats | null {
-  return v && !("status" in v) ? v : null;
-}
-
-function fmtUptime(s: number): string {
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-function num(v: number | undefined | null): string {
-  return v === undefined || v === null ? "-" : v.toLocaleString();
-}
+import { useConsoleData } from "@/features/console/useConsoleData";
+import {
+  availNeo, availPg, availQd, fmtUptime, num,
+} from "@/features/console/format";
+import ConversationAdmin from "@/features/console/ConversationAdmin";
+import GuestToggle from "@/features/console/GuestToggle";
+import UserAdmin from "@/features/console/UserAdmin";
 
 export default function ConsolePage() {
   const { t } = useI18n();
-  const [stats, setStats] = useState<ConsoleStats | null>(null);
-  const [health, setHealth] = useState<Health | null>(null);
-  const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [buffered, setBuffered] = useState(0);
-  const [guestOn, setGuestOn] = useState(false);
-  const [forbidden, setForbidden] = useState(false);
-  const [error, setError] = useState("");
-  const [loaded, setLoaded] = useState(false);
-
-  const refreshCore = useCallback(async () => {
-    const me = getUser();
-    if (me && me.role !== "admin") {
-      setForbidden(true); // 本地身份已明示非管理员：不发请求直接进提示态
-      setLoaded(true);
-      return;
-    }
-    try {
-      const [st, h, m] = await Promise.all([
-        getConsoleStats(),
-        getHealth(),
-        getMetrics(),
-      ]);
-      setStats(st);
-      setHealth(h);
-      setMetrics(m);
-      setError("");
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 403) setForbidden(true);
-      else setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoaded(true);
-    }
-  }, []);
-
-  const refreshLogs = useCallback(async () => {
-    try {
-      const r = await getLogs("INFO");
-      setLogs(r.logs.slice(-50).reverse());
-      setBuffered(r.buffered);
-    } catch {
-      /* 轮询失败静默（下个周期再试） */
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshCore();
-    refreshLogs();
-    getMe()
-      .then((me) => setGuestOn(me.guest_enabled))
-      .catch(() => {});
-    const core = setInterval(refreshCore, 30_000);
-    const lg = setInterval(refreshLogs, 5_000);
-    return () => {
-      clearInterval(core);
-      clearInterval(lg);
-    };
-  }, [refreshCore, refreshLogs]);
+  const d = useConsoleData();
+  const { stats, health, metrics, logs, buffered, guestOn, forbidden, error, loaded } = d;
 
   const requests = Object.values(metrics?.requests ?? {}).reduce(
     (acc, r) => ({ count: acc.count + r.count, errors: acc.errors + r.errors }),
@@ -143,6 +49,10 @@ export default function ConsolePage() {
   ];
 
   const cardHead = "text-sm font-semibold text-fg";
+  const refresh = () => {
+    d.refreshCore();
+    d.refreshLogs();
+  };
 
   if (forbidden) {
     return (
@@ -165,10 +75,7 @@ export default function ConsolePage() {
           <a href="/" className="text-dim hover:text-fg">{t.consoleBack}</a>
           <a href="/eval" className="text-dim hover:text-fg">{t.consoleEvalLink}</a>
           <button
-            onClick={() => {
-              refreshCore();
-              refreshLogs();
-            }}
+            onClick={refresh}
             className="rounded-lg border border-line px-2 py-1 text-dim hover:text-fg"
             title={t.consoleRefresh}
           >
@@ -348,7 +255,7 @@ export default function ConsolePage() {
         <h3 className={cardHead}>{t.secActions}</h3>
         <div className="mt-2 grid gap-3 lg:grid-cols-2">
           <UserAdmin />
-          <GuestToggle enabled={guestOn} onChange={setGuestOn} />
+          <GuestToggle enabled={guestOn} onChange={d.setGuestOn} />
         </div>
         <div className="mt-3">
           <ConversationAdmin />
