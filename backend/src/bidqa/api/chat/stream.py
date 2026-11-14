@@ -21,34 +21,12 @@ from bidqa.api.chat.schema import ChatStreamRequest
 from bidqa.api.chat.sse import SseChannel
 from bidqa.api.ratelimit import rate_identity
 from bidqa.application.chat.availability import chat_available
+from bidqa.application.chat.online import record_chat_done
 from bidqa.auth.identity import ROLE_GUEST
 from bidqa.config import get_settings
 from bidqa.errors import EC_RATE_LIMITED, EC_SOURCE_DEGRADED, error_body
 
 router = APIRouter()
-
-
-def _online_record(payload: ChatStreamRequest, result: Any, trace_id: str,
-                   elapsed_ms: int, settings: Any) -> None:
-    """G4 在线评测埋点：行为全量免费；采样率>0 时抽中轮附带正文判分（旁路绝不抛错）。
-
-    settings 由端点经 DI 传入（不在旁路里直调 get_settings——测试隔离口径，
-    2026-11-14 vision 同类缺陷修复时定的规矩）。
-    """
-    try:
-        from bidqa.eval.online import get_online, pick_sample
-        sample = None
-        if pick_sample(settings.ONLINE_EVAL_SAMPLE_RATE):
-            sample = {"question": payload.message, "answer": result.answer,
-                      "sources": list(result.sources or []), "trace_id": trace_id}
-        get_online().record_done(
-            provider=payload.provider or "", web_enabled=payload.web_enabled,
-            thinking_enabled=payload.thinking_enabled, rounds=int(result.rounds or 0),
-            tool_name=str(result.first_tool or ""), hit_cap=bool(result.hit_cap),
-            clarify=bool(result.clarify), degraded=bool(result.degraded),
-            elapsed_ms=elapsed_ms, sample=sample)
-    except Exception:
-        pass  # 评测旁路失败不影响问答（docs/01：失败=等同不开启）
 
 
 @router.post("/api/chat/stream")
@@ -118,7 +96,11 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
     def build_done_event(outcome: Any, elapsed_ms: int) -> dict:
         done = build_done(outcome.result, elapsed_ms=elapsed_ms, trace_id=trace_id,
                           provider=payload.provider or "")
-        _online_record(payload, outcome.result, trace_id, elapsed_ms, settings)
+        record_chat_done(settings, question=payload.message,
+                         provider=payload.provider, web_enabled=payload.web_enabled,
+                         thinking_enabled=payload.thinking_enabled,
+                         result=outcome.result, trace_id=trace_id,
+                         elapsed_ms=elapsed_ms)
         return done
 
     return StreamingResponse(

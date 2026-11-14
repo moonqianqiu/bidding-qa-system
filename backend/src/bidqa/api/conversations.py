@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from bidqa.application.chat.online import record_feedback
 from bidqa.auth.identity import ROLE_ADMIN
+from bidqa.config import get_settings
 from bidqa.database.conversations import is_uuid
 from bidqa.database.factory import build_conversation_store, build_feedback_store
 from bidqa.errors import EC_NOT_FOUND, EC_SOURCE_DEGRADED, error_body
@@ -118,7 +120,8 @@ class FeedbackRequest(BaseModel):
 
 
 @router.post("/api/feedback")
-def create_feedback(payload: FeedbackRequest) -> dict[str, Any]:
+def create_feedback(payload: FeedbackRequest,
+                    settings: Any = Depends(get_settings)) -> dict[str, Any]:
     fb = build_feedback_store()
     if fb is None:
         return _5031()
@@ -130,11 +133,7 @@ def create_feedback(payload: FeedbackRequest) -> dict[str, Any]:
         [{"id": s.get("id"), "title": s.get("title", "")} for s in payload.sources],
         payload.trace_id)
     if payload.rating == "down":  # G4 点踩必评：忠实度单维（60s 去重；旁路不抛错）
-        try:
-            from bidqa.eval.online import get_online
-            get_online().record_feedback_down(
-                trace_id=payload.trace_id, question=payload.question,
-                answer=payload.answer, sources=list(payload.sources))
-        except Exception:
-            pass
+        record_feedback(settings, trace_id=payload.trace_id,
+                        question=payload.question, answer=payload.answer,
+                        sources=list(payload.sources))
     return {"id": feedback_id, "rating": payload.rating}

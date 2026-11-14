@@ -63,11 +63,15 @@ class OnlineEval:
 
     def record_done(self, *, provider: str, web_enabled: bool, thinking_enabled: bool,
                     rounds: int, tool_name: str, hit_cap: bool, clarify: bool,
-                    degraded: bool, elapsed_ms: int, sample: dict | None) -> None:
-        """chat_stream 收尾调用；sample 非 None 表示本轮被抽中判分（含正文）。"""
+                    degraded: bool, elapsed_ms: int, sample: dict | None,
+                    settings: Any | None = None) -> None:
+        """chat_stream 收尾调用；sample 非 None 表示本轮被抽中判分（含正文）。
+
+        settings 由调用方注入（DI 口径）；缺省回落全局 _settings()（兼容旧调用）。
+        """
         try:
-            settings = _settings()
-            if not settings.ONLINE_EVAL_ENABLED:
+            resolved = settings if settings is not None else _settings()
+            if not resolved.ONLINE_EVAL_ENABLED:
                 return
             event = {"ts": time.strftime("%H:%M:%S"), "provider": provider,
                      "web": web_enabled, "thinking": thinking_enabled,
@@ -90,10 +94,12 @@ class OnlineEval:
     # ── 点踩必评（60s 去重） ──
 
     def record_feedback_down(self, *, trace_id: str, question: str, answer: str,
-                             sources: list[dict]) -> None:
+                             sources: list[dict],
+                             settings: Any | None = None) -> None:
+        """settings 由调用方注入（DI 口径）；缺省回落全局 _settings()。"""
         try:
-            settings = _settings()
-            if not settings.ONLINE_EVAL_ENABLED:
+            resolved = settings if settings is not None else _settings()
+            if not resolved.ONLINE_EVAL_ENABLED:
                 return
             key = trace_id or f"{question[:64]}"
             now = time.monotonic()

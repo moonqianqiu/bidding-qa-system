@@ -17,6 +17,7 @@ from bidqa.api.chat import stream as stream_mod
 from bidqa.application.chat import availability as availability_mod
 from bidqa.application.chat import degrade as degrade_mod
 from bidqa.application.chat import history as history_mod
+from bidqa.application.chat import online as app_online_mod
 from bidqa.application.chat import worker as worker_mod
 from bidqa.api.ratelimit import SlidingWindowLimiter
 from bidqa.clients.siliconflow import DataSourceError
@@ -242,6 +243,52 @@ def test_degrade_uses_provider_profile(monkeypatch) -> None:
         "问题", "zh", [], lambda stage, data: None, "boom", provider="fast")
     assert called == ["fast"]
     assert out.answer == "依据材料[1]直答。"
+
+
+# ── G4 在线评测埋点（v2.2 下沉 application/chat/online；settings 经 DI 注入）──
+def test_online_record_called_on_done(settings_factory, monkeypatch) -> None:
+    settings = settings_factory(ONLINE_EVAL_ENABLED="true",
+                                ONLINE_EVAL_SAMPLE_RATE="1.0")
+    client = TestClient(create_app(settings))
+    chat = FakeChat(tools_script=[text_msg("依据材料[1]直答。")])
+    patch_service(monkeypatch, chat=chat)
+    recorded: dict = {}
+
+    class FakeOnline:
+        def record_done(self, **kw):
+            recorded.update(kw)
+
+    monkeypatch.setattr(app_online_mod, "get_online", lambda: FakeOnline())
+    events = stream_events(client, {"message": "中标通知书效力？"})
+    guards_mod.clear_seen()
+    assert events[-1]["type"] == "done"
+    assert recorded["provider"] == "" and recorded["elapsed_ms"] >= 0
+    assert recorded["sample"]["trace_id"] == events[-1]["trace_id"]
+    assert recorded["sample"]["question"] == "中标通知书效力？"
+
+
+def test_feedback_down_records_via_wrapper(settings_factory, monkeypatch) -> None:
+    settings = settings_factory(ONLINE_EVAL_ENABLED="true")
+    client = TestClient(create_app(settings))
+    recorded: dict = {}
+
+    class FakeOnline:
+        def record_feedback_down(self, **kw):
+            recorded.update(kw)
+
+    monkeypatch.setattr(app_online_mod, "get_online", lambda: FakeOnline())
+
+    class FakeFb:
+        def insert_feedback(self, *args, **kwargs):
+            return "fb-1"
+
+    import bidqa.api.conversations as conv_mod
+    monkeypatch.setattr(conv_mod, "build_feedback_store", lambda: FakeFb())
+    resp = client.post("/api/feedback", json={"question": "q", "rating": "down",
+                                              "answer": "a", "trace_id": "t1"})
+    assert resp.status_code == 200
+    assert recorded["trace_id"] == "t1" and recorded["question"] == "q"
+    assert recorded["answer"] == "a"
 
 
 # ── B4 限流 / 4091 幂等 ──
