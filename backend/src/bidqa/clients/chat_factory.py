@@ -40,6 +40,19 @@ def build_chat_for(provider: str | None) -> ChatClient | None:
     return client
 
 
+def build_subject_batch_chat() -> ChatClient | None:
+    """数据加工批量通道（SUBJECT_BATCH_*）：subject-batch 与图谱归一共用。
+
+    与三个运行时槽位（CHAT/VISION/JUDGE）独立：离线批量任务专用，未配置=调用方
+    诚实拒绝（返回 None，不回落主槽位）。单进程内按需构造，不做单例缓存。
+    """
+    s = get_settings()
+    if not s.has_subject_batch:
+        return None
+    return ChatClient(s.SUBJECT_BATCH_BASE_URL, s.SUBJECT_BATCH_API_KEY,
+                      s.SUBJECT_BATCH_MODEL)
+
+
 @lru_cache(maxsize=1)
 def build_vision() -> ChatClient | None:
     """视觉槽位客户端（未配置=降级 None，/api/vision 5031；同一 OpenAI-compatible 适配器）。"""

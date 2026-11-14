@@ -119,13 +119,21 @@ def _ingest_graph(args) -> int:
     if pg is None or neo is None:
         print("PG/Neo4j 未配置或不可用", file=sys.stderr)
         return 2
-    # 归一是付费动作：只有显式 --normalize 才构建主模型（--mapping-file 零模型调用）
+    # 归一是显式动作：默认走数据加工批量通道（SUBJECT_BATCH_*），--normalize-channel chat 可改主槽位
     chat = None
     if args.normalize:
-        chat = build_agent_stack()[0]
-        if chat is None:
-            print("主模型未配置，无法执行 --normalize", file=sys.stderr)
-            return 2
+        if args.normalize_channel == "batch":
+            from bidqa.clients.chat_factory import build_subject_batch_chat
+            chat = build_subject_batch_chat()
+            if chat is None:
+                print("SUBJECT_BATCH_API_KEY 未配置（数据加工批量通道），无法执行 --normalize；"
+                      "可改用 --normalize-channel chat", file=sys.stderr)
+                return 2
+        else:
+            chat = build_agent_stack()[0]
+            if chat is None:
+                print("主模型未配置，无法执行 --normalize", file=sys.stderr)
+                return 2
     if args.dry_run and not args.normalize and not args.mapping_file:
         print("提示：未启用 --normalize/--mapping-file，本次为恒等映射预览（零模型调用）")
     result = build_graph(pg, neo, chat=chat, batch=args.batch_id,
@@ -134,6 +142,9 @@ def _ingest_graph(args) -> int:
     # 不把上千条映射全量打到终端：摘要 + 产物路径（完整内容在 mapping JSON）
     keys = ("rows", "dry_run", "mapping_items", "review_items", "mapping_source",
             "normalize_calls", "failed_batches", "mapping_json", "review_csv", "counts")
-    print(json.dumps({k: result[k] for k in keys if k in result},
-                     ensure_ascii=False, indent=2, default=str))
+    summary = {k: result[k] for k in keys if k in result}
+    if args.normalize:
+        summary["normalize_channel"] = args.normalize_channel
+        summary["normalize_model"] = getattr(chat, "model", None)
+    print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
     return 0

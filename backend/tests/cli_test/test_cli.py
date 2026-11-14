@@ -228,10 +228,39 @@ def test_ingest_graph_dry_run_skips_chat_without_normalize(monkeypatch, capsys):
     assert "恒等映射预览" in capsys.readouterr().out
 
 
-def test_ingest_graph_normalize_builds_chat(monkeypatch):
-    monkeypatch.setattr("bidqa.container.build_agent_stack", lambda: ("fake-chat",))
+def test_ingest_graph_normalize_defaults_to_batch_channel(monkeypatch):
+    monkeypatch.setattr("bidqa.clients.chat_factory.build_subject_batch_chat",
+                        lambda: "batch-chat")
+
+    def boom():
+        raise AssertionError("默认批量通道不应构建 Agent 栈")
+
+    monkeypatch.setattr("bidqa.container.build_agent_stack", boom)
     captured: dict = {}
     _patch_graph_deps(monkeypatch, captured)
     assert cli.main(["ingest", "graph", "--normalize", "--dry-run"]) == 0
+    assert captured["chat"] == "batch-chat"
+    assert captured["normalize"] is True
+
+
+def test_ingest_graph_normalize_channel_chat_uses_main_slot(monkeypatch):
+    def boom():
+        raise AssertionError("显式 chat 通道不应构建批量客户端")
+
+    monkeypatch.setattr("bidqa.clients.chat_factory.build_subject_batch_chat", boom)
+    monkeypatch.setattr("bidqa.container.build_agent_stack", lambda: ("fake-chat",))
+    captured: dict = {}
+    _patch_graph_deps(monkeypatch, captured)
+    assert cli.main(["ingest", "graph", "--normalize", "--normalize-channel", "chat",
+                     "--dry-run"]) == 0
     assert captured["chat"] == "fake-chat"
     assert captured["normalize"] is True
+
+
+def test_ingest_graph_normalize_batch_unconfigured_returns_2(monkeypatch, capsys):
+    monkeypatch.setattr("bidqa.clients.chat_factory.build_subject_batch_chat",
+                        lambda: None)
+    captured: dict = {}
+    _patch_graph_deps(monkeypatch, captured)
+    assert cli.main(["ingest", "graph", "--normalize", "--dry-run"]) == 2
+    assert "SUBJECT_BATCH_API_KEY" in capsys.readouterr().err

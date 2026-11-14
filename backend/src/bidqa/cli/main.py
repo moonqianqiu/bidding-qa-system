@@ -57,10 +57,14 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="试运行：打条数+抽样+不写库（单独使用不调模型）")
     g_norm = p_graph.add_mutually_exclusive_group()
     g_norm.add_argument("--normalize", action="store_true",
-                        help="调用主模型做实体归一（付费；产物 data/processed/"
-                             "graph_alias_mapping_<batch>.json + graph_merge_review_<batch>.csv）")
+                        help="执行实体归一（默认走数据加工批量通道 SUBJECT_BATCH_*；产物 "
+                             "data/processed/graph_alias_mapping_<batch>.json + "
+                             "graph_merge_review_<batch>.csv）")
     g_norm.add_argument("--mapping-file", default=None,
                         help="复用已生成的归一映射 JSON（零模型调用）")
+    p_graph.add_argument("--normalize-channel", choices=("batch", "chat"), default="batch",
+                         help="归一通道：batch=SUBJECT_BATCH_* 数据加工批量通道（默认）；"
+                              "chat=主模型槽位（仅 --normalize 生效）")
 
     from bidqa.database.qdrant import SOURCE_TYPES  # 白名单单一来源
     p_pdf = ingest_sub.add_parser("pdf", help="PDF → 页码契约 Markdown → 切分 → 嵌入入库（F2/F3/F4）")

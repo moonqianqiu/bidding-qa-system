@@ -54,10 +54,12 @@ def cmd_subject_batch(args, _settings: Any) -> int:
         if not req_path.exists():
             print("requests.jsonl 不存在，先跑 subject-batch build", file=sys.stderr)
             return 2
-        from bidqa.clients.llm import ChatClient
+        from bidqa.clients.chat_factory import build_subject_batch_chat
 
-        client = ChatClient(s.SUBJECT_BATCH_BASE_URL, s.SUBJECT_BATCH_API_KEY,
-                            s.SUBJECT_BATCH_MODEL)
+        client = build_subject_batch_chat()  # 批量通道单一构造入口（与图谱归一共用）
+        if client is None:
+            print("SUBJECT_BATCH_API_KEY 未配置（backend/.env），run 不可用", file=sys.stderr)
+            return 2
 
         def chat_fn(messages, temperature):  # reasoning_effort=low 关思考流（2026-11-08 实证）
             data = client.chat_raw({
