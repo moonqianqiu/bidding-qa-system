@@ -25,7 +25,7 @@ class FakeChat:
 
 
 def make_client(monkeypatch, retriever, chat, settings_factory):
-    import bidqa.api.ask as ask_mod
+    import bidqa.application.ask as ask_mod  # C4：流程下沉后 patch 应用层
 
     monkeypatch.setattr(ask_mod, "build_retriever", lambda: retriever)
     monkeypatch.setattr(ask_mod, "build_chat", lambda: chat)

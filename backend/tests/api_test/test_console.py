@@ -12,7 +12,9 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-import bidqa.api.system.router as sys_mod  # 端点与 builder 命名空间（providers 独立模块不经此）
+import bidqa.api.system.console as console_mod
+import bidqa.application.admin.console as admin_mod  # C4：聚合 builder 缝
+import bidqa.api.system.users as users_mod  # 用户端点 builder 缝
 from bidqa.auth.identity import Identity
 from bidqa.main import create_app
 
@@ -160,17 +162,20 @@ class FakeNeo:
 
 
 def patch_admin(monkeypatch, store: FakeUsersStore, pg: FakePg | None = None) -> None:
-    """system 模块命名空间整体替换（import 点收口在 sys_mod）。"""
+    """builder 缝随 C4 拆分分发到各消费模块（FakePg 本就是 store 形状）。"""
     import bidqa.api.auth as auth_mod
     import bidqa.api.middleware as mw
 
     monkeypatch.setattr(mw, "build_users_store", lambda: store)
     monkeypatch.setattr(auth_mod, "build_users_store", lambda: store)
-    monkeypatch.setattr(sys_mod, "build_users_store", lambda: store)
-    monkeypatch.setattr(sys_mod, "build_pg", lambda: pg)
-    monkeypatch.setattr(sys_mod, "build_conversation_store", lambda: pg)
-    monkeypatch.setattr(sys_mod, "build_repo", lambda: FakeRepo())
-    monkeypatch.setattr(sys_mod, "build_neo", lambda: FakeNeo())
+    monkeypatch.setattr(users_mod, "build_users_store", lambda: store)
+    import bidqa.api.system.conv_admin as conv_admin_mod
+
+    monkeypatch.setattr(admin_mod, "build_pg", lambda: pg)
+    monkeypatch.setattr(admin_mod, "build_repo", lambda: FakeRepo())
+    monkeypatch.setattr(admin_mod, "build_neo", lambda: FakeNeo())
+    monkeypatch.setattr(admin_mod, "build_users_store", lambda: store)
+    monkeypatch.setattr(conv_admin_mod, "build_conversation_store", lambda: pg)
 
 
 def admin_client(monkeypatch, settings_factory, store: FakeUsersStore,
@@ -178,7 +183,7 @@ def admin_client(monkeypatch, settings_factory, store: FakeUsersStore,
     ident = Identity("admin", str(uuid.uuid4()), "admin1", "t1")
     store.sessions["t1"] = ident  # 种入管理员会话（auth("t1") 头可解析）
     patch_admin(monkeypatch, store, pg)
-    monkeypatch.setattr(sys_mod, "_console_cache", None, raising=False)
+    monkeypatch.setattr(console_mod, "_console_cache", None, raising=False)
     settings = settings_factory(USERS_ENABLED="true")
     return TestClient(create_app(settings))
 
@@ -189,9 +194,9 @@ def auth(token: str = "t1") -> dict[str, str]:
 
 @pytest.fixture(autouse=True)
 def _console_cache_reset():
-    sys_mod._console_cache = None
+    console_mod._console_cache = None
     yield
-    sys_mod._console_cache = None
+    console_mod._console_cache = None
 
 
 # ── 聚合端点 ──
@@ -217,8 +222,8 @@ def test_console_aggregate_degraded_db_marks_unavailable(settings_factory, monke
 
     store = FakeUsersStore()
     client = admin_client(monkeypatch, settings_factory, store, FakePg())
-    monkeypatch.setattr(sys_mod, "build_repo", boom)
-    monkeypatch.setattr(sys_mod, "_console_cache", None, raising=False)
+    monkeypatch.setattr(admin_mod, "build_repo", boom)
+    monkeypatch.setattr(console_mod, "_console_cache", None, raising=False)
     r = client.get("/api/system/console", headers=auth("t1"))
     assert r.status_code == 200
     data = r.json()
@@ -232,7 +237,7 @@ def test_console_cache_within_ttl(settings_factory, monkeypatch):
     store = FakeUsersStore()
     client = admin_client(monkeypatch, settings_factory, store, FakePg())
     first = client.get("/api/system/console", headers=auth()).json()
-    assert sys_mod._console_cache is not None
+    assert console_mod._console_cache is not None
     store.users.append({"username": "bob", "role": "user", "disabled": False,
                         "created_at": "-", "sessions": 0})
     second = client.get("/api/system/console", headers=auth()).json()

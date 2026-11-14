@@ -20,9 +20,9 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
+from bidqa.auth.factory import build_users_store
 from bidqa.auth.identity import MACHINE_USERNAME, ROLE_ADMIN, ROLE_GUEST, Identity
 from bidqa.errors import EC_FORBIDDEN, EC_UNAUTHORIZED, error_body
-from bidqa.service import build_users_store
 
 HEALTH_PATH = "/api/health"  # 免鉴权（docs/01 §3.1）
 AUTH_EXEMPT_PATHS = (HEALTH_PATH, "/api/auth/login", "/api/auth/guest", "/api/auth/me")

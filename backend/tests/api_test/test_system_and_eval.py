@@ -6,7 +6,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from bidqa.api.system import router as sys_mod
+import bidqa.api.system.metrics as sys_mod  # C4：metrics 缓存命名空间
 from bidqa.main import create_app
 from bidqa.obs import logs as obs_mod
 

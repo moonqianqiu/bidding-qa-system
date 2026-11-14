@@ -12,7 +12,7 @@ import time
 from fastapi.testclient import TestClient
 
 from bidqa.application.vision import image_context_block
-from bidqa.api.vision import RefStore, get_ref_store
+from bidqa.application.vision import RefStore, get_ref_store  # C4：状态归应用层
 from bidqa.main import create_app
 
 
@@ -26,12 +26,13 @@ class FakeVision:
 
 
 def _make_client(settings_factory, monkeypatch, vision_configured: bool) -> TestClient:
-    from bidqa.api import vision as vision_mod
+    import bidqa.application.vision as app_vision  # C4：build_vision 缝在应用层
+
     extra = ({"VISION_BASE_URL": "http://vision.local/v1", "VISION_API_KEY": "k",
               "VISION_MODEL": "test-vision"} if vision_configured else {})
     app = create_app(settings_factory(**extra))
     if vision_configured:
-        monkeypatch.setattr(vision_mod, "build_vision", lambda: FakeVision())
+        monkeypatch.setattr(app_vision, "build_vision", lambda: FakeVision())
     return TestClient(app)
 
 

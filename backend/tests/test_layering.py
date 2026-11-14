@@ -103,14 +103,7 @@ def _prefix_matcher(pkg: str) -> Callable[[str], str | None]:
 # ── 规则与 allowlist（条目须注明 owner/移除步骤；双向一致由 test_allowlist_matches 断言）──
 ALLOWLIST: dict[str, set[tuple[str, str]]] = {
     # 过渡：bidqa.service 组合根按职责拆入窄 factory（重构方案 §4.1）
-    "R6-api不得import组合根service": {
-        ("api.ask", "service"),            # C3: application/ask + rag/clients factory
-        ("api.vision", "service"),         # C3: application/vision + clients/chat_factory
-        ("api.auth", "service"),             # C4: auth/factory
-        ("api.middleware", "service"),       # C4: auth/factory
-        ("api.health", "service"),           # C4: database/rag factory
-        ("api.system.router", "service"),  # C4: application/admin
-    },
+    "R6-api不得import组合根service": set(),  # C4：api→service 全部清零（各归窄工厂）
     # 过渡：图片 ref store 归 application/vision（C3 迁移后清零）
     "R5-chat不得依赖api.vision": set(),  # C3 归 application/vision 后清零——空集存档
     # 业务路由 import 观测路由（note_request）：C1 pilot 已收口至 obs——空集存档

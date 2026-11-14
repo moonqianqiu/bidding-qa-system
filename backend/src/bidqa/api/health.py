@@ -36,7 +36,7 @@ def _probe_all(settings: Settings) -> dict:
     results: dict[str, dict] = {}
 
     def qdrant_probe():
-        from bidqa.service import build_repo
+        from bidqa.database.factory import build_repo
         repo = build_repo()
         repo.count()
 

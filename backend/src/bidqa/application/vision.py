@@ -12,8 +12,15 @@ import threading
 import time
 import uuid
 
+from bidqa.clients.chat_factory import build_vision  # noqa: F401  # patch 缝（测试替身注入点）
+
 REF_TTL_SECONDS = 600.0  # §3.3：服务端缓存图片描述 TTL 10 分钟
 REF_STORE_MAX = 64  # 有界防泄漏；满了先清过期再丢最旧（web_cache 同款策略）
+
+VISION_SYSTEM_PROMPT = (
+    "你是招投标文件图片解析助手。只描述图片中真实可见的内容（文字/表格/数字/布局），"
+    "不推测、不编造；看不清的部分如实说明。")
+VISION_USER_PROMPT = "请解析这张图片的内容，输出结构化的文字描述。"
 
 
 class RefStore:
@@ -71,3 +78,30 @@ def image_context_block(refs: list[str]) -> str:
     if not descs:
         return ""
     return "\n".join(f"【图片内容 {i}】{d}" for i, d in enumerate(descs, 1))
+
+
+class VisionUnavailable(Exception):
+    """视觉解析不可用（API 层转 5031；str = body 里的 source 细节）。"""
+
+
+def describe_image(data_url: str) -> str:
+    """视觉槽位解析（多模态 list-content，同一 OpenAI-compatible 适配器）。
+
+    解析失败/空描述 → VisionUnavailable（API 层 5031），绝不返回空描述充数。
+    """
+    client = build_vision()
+    if client is None:
+        raise VisionUnavailable("vision: 视觉槽位未配置（VISION_*）")
+    try:
+        description = str(client.chat([
+            {"role": "system", "content": VISION_SYSTEM_PROMPT},
+            {"role": "user", "content": [
+                {"type": "text", "text": VISION_USER_PROMPT},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]},
+        ], temperature=0.1)).strip()
+    except Exception as exc:
+        raise VisionUnavailable(f"vision: {type(exc).__name__}: {str(exc)[:120]}") from exc
+    if not description:
+        raise VisionUnavailable("vision: 上游返回空描述")
+    return description

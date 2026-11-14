@@ -13,10 +13,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from bidqa.auth.factory import build_users_store
 from bidqa.auth.identity import MACHINE_USERNAME, ROLE_ADMIN, Identity
 from bidqa.config import get_settings
 from bidqa.errors import EC_FORBIDDEN, EC_SOURCE_DEGRADED, EC_UNAUTHORIZED, error_body
-from bidqa.service import build_users_store
 
 router = APIRouter()
 
