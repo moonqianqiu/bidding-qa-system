@@ -9,14 +9,14 @@
 1. 读 `AGENTS.md`（硬约束 10 条 + 预算红线）→ `docs/04` §6（一次提问的代码级走读，路径已对齐 v2.0 结构）
 2. 结构速览：`docs/01` §1 分层树——**api=HTTP 适配壳、application=业务用例、工厂在各包 factory.py、组合根只有 container.build_agent_stack**；分层边界由 `tests/test_layering.py` AST 钉死（违规即红）
 3. 拉起服务：`bash deploy/start.sh` → **立刻** `curl 127.0.0.1:8000/api/health` 六组件全 `ok`
-4. 跑验证三连：`cd backend && uv run pytest -q`（441 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
+4. 跑验证三连：`cd backend && uv run pytest -q`（459 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
 
 ## 2. 质量现状（快照，接手时按 §6 复核）
 
 | 项 | 状态 | 复核命令 |
 |---|---|---|
-| 标签 | `v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` | `git tag -l && git log --oneline -12` |
-| 后端测试 | **441 passed 全绿（含 Neo4j/PG 集成，服务需在线）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
+| 标签 | `v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` → `v2.3-dual-vision` | `git tag -l && git log --oneline -12` |
+| 后端测试 | **459 passed 全绿（含 Neo4j/PG 集成，服务需在线）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
 | 分层守卫 | `tests/test_layering.py` **R1-R11** 全部空集（永久护栏）+ 每条规则「能红」自检 | `pytest tests/test_layering.py -q` |
 | 类型检查 | pyrefly **49**（基线 56；bad-override ×5 + missing-attribute ×3 已清零，余为 psycopg 行类型噪音） | `uv run --with pyrefly pyrefly check src` |
 | 前端类型 | 绿（`npm run build` 五路由全预渲染） | `cd frontend && npm run build` |
@@ -32,6 +32,7 @@
 
 | 项 | 性质 | 说明 |
 |---|---|---|
+| v2.3 双通道付费验收 | 付费动作（待用户） | 代码已全绿；`backend/.env` 待用户自填 `OCR_*` 三行（建议 `PaddlePaddle/PaddleOCR-VL`，SiliconFlow 有模型）→ 重启后端 → 表格截图应 `mode_used=ocr` 且答案引用图中数字、照片应 `mode_used=describe`；开发日志有验收清单 |
 | CI / 私有远端 | P0 工程化 | 新仓 `git remote -v` 为空——建私有库 `git remote add origin <url> && git push origin main --tags` |
 | `detail_search` 金额排序 | 功能排期 | 查询类型白名单 + order_by 列白名单 + 工具描述更新；**重构完成后另立一轮**（不在重构 commit 混功能） |
 | 离群值溯源 | 数据排查 | 66 亿（涡阳 BZGY2023CG141）/ 23.7 亿 全局头部可疑值，源 xlsx 不可考——需与甲方核对源表 |
@@ -43,7 +44,7 @@
 
 ## 4. 环境与数据速览
 
-- **配置**：`backend/.env`（**用户自己管**，别代改；2026-11-14 已从旧仓逐字节复制，md5 一致）。三槽位 `CHAT_/VISION_/JUDGE_*`；
+- **配置**：`backend/.env`（**用户自己管**，别代改；2026-11-14 已从旧仓逐字节复制，md5 一致）。三槽位 `CHAT_/VISION_/JUDGE_*`；v2.3 增 `OCR_*`（能力型，未配置=图片自动路由退化为 Qwen 通用描述）；
   `SUBJECT_BATCH_*`=数据加工批量通道（subject-batch 与图谱归一默认通道）；
   `EMBEDDING_/RERANK_`=SiliconFlow；`WEB_SEARCH_PROVIDERS`=联网名册（留空=关）；`CHAT_PROFILES`=命名档；
   `CHAT_MAX_TOKENS`=8192（思考型上游先烧 reasoning，预算不足正文空）；`USERS_ENABLED`=true（admin/admin123 种子，**建议改密**）。
@@ -65,7 +66,7 @@
 
 - [ ] `git status` 干净；`git log --oneline -12` 覆盖 C0-C9（基线→重构逐 commit 绿）
 - [ ] `bash deploy/start.sh` 后 `/api/health` 六组件全 ok
-- [ ] `cd backend && uv run pytest -q` → 441 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
+- [ ] `cd backend && uv run pytest -q` → 459 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
 - [ ] `cd frontend && npm run build` 绿（五路由预渲染）
 - [ ] `bash deploy/e2e-chat.sh --mutation-check` PASS（免费）；真跑三走向属付费动作（跑前告知用户）
 - [ ] `pytest tests/test_layering.py` 3 passed（分层守卫全绿；allowlist 应全空集）
