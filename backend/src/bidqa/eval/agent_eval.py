@@ -1,0 +1,130 @@
+"""G3 离线 Agent 评测（docs/02；内部函数层 docs/01 §3.6——不经 HTTP、不占限流）。
+
+走 AgentLoop 编排函数本身：工具选择准确率 + hit_cap 率 + 轮次 + 延迟。
+快照 §4.4：原子写 + 命名 {kind}_{YYYYMMDD}_{git短hash}_{judge}.json；env.link="internal"。
+chat 由调用方注入（真实模型或 fake 脚本），评测代码不感知厂商。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+RESULTS_DIR = Path("eval/results")
+HIT_CAP_TARGET = 0.10  # hit_cap 率目标 <10%（docs/02 §0.1）
+
+
+def load_golden(path: str) -> list[dict]:
+    return [json.loads(l) for l in Path(path).read_text(encoding="utf-8").splitlines()
+            if l.strip()]
+
+
+def git_short_hash() -> str:
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
+                              text=True, timeout=5, check=True).stdout.strip()
+    except Exception:
+        return os.environ.get("BIDQA_GIT_HASH", "unknown")
+
+
+def judge_model_name(settings: Any) -> str:
+    return (settings.JUDGE_MODEL or "nojudge").replace("/", "_")
+
+
+def snapshot_path(kind: str, judge: str) -> Path:
+    """命名规范（docs/01 §4.4）：{kind}_{YYYYMMDD}_{git短hash}_{判分模型}.json"""
+    import datetime
+    date_str = datetime.datetime.now().strftime("%Y%m%d")
+    return RESULTS_DIR / f"{kind}_{date_str}_{git_short_hash()}_{judge}.json"
+
+
+def atomic_write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)  # 原子写
+
+
+def precheck_tool_registry(cases: list[dict], loop: Any) -> None:
+    """执行前门禁：黄金集需要的工具必须全部注册，否则拒绝跑批。
+
+    背景（2026-11-02 教训）：PG/Neo4j 服务静默宕机时工具注册表只剩知识库，
+    模型被迫全选 search_knowledge，产出 0.54 的误导分数——降级环境不产出评测分数。
+    """
+    expected: set[str] = set()
+    for case in cases:
+        expected.update(case.get("expected_tools") or [])
+    expected.discard("ask_clarification")  # 澄清工具由首轮门控动态挂载，属正常
+    registry = getattr(loop, "registry", None)
+    names = set(registry.names() if registry is not None and hasattr(registry, "names") else [])
+    missing = sorted(expected - names)
+    if missing:
+        raise RuntimeError(
+            f"评测环境降级：黄金集所需工具未注册 {missing}（已注册: {sorted(names)}）。"
+            "请确认 PG/Neo4j/Qdrant 服务在线后重跑；降级环境不产出评测分数。")
+
+
+def run_agent_eval(golden_path: str, loop_factory: Any, settings: Any) -> dict:
+    """loop_factory() -> AgentLoop：每次用例新建（fake 脚本/真实客户端均可注入）。"""
+    cases = load_golden(golden_path)
+    precheck_tool_registry(cases, loop_factory())  # 工具不齐 → 先拒绝，不产出误导分数
+    results = []
+    for case in cases:
+        t0 = time.perf_counter()
+        loop = loop_factory()
+        try:
+            result = loop.run(case["question"])
+            error = ""
+        except Exception as exc:
+            result = None
+            error = f"{type(exc).__name__}: {exc}"
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+
+        if result is None:
+            results.append({"id": case["id"], "question": case["question"],
+                            "pass": False, "error": error, "elapsed_ms": elapsed_ms})
+            continue
+        expected = set(case.get("expected_tools") or [])
+        used = {c["name"] for r in result.tool_trace for c in r}
+        if result.clarify:
+            tool_hit = expected == {"ask_clarification"}
+        else:
+            tool_hit = bool(expected & used) and "ask_clarification" not in used
+        results.append({
+            "id": case["id"], "question": case["question"],
+            "query_type": case.get("query_type"),
+            "expected_tools": sorted(expected), "used_tools": sorted(used),
+            "tool_hit": tool_hit, "clarify": result.clarify,
+            "rounds": result.rounds, "hit_cap": result.hit_cap,
+            "answer_head": result.answer[:80],
+            "sources": len(result.sources), "elapsed_ms": elapsed_ms,
+            "pass": tool_hit,
+        })
+
+    passed = sum(1 for r in results if r["pass"])
+    hit_caps = sum(1 for r in results if r.get("hit_cap"))
+    clarifies = [r for r in results if r.get("query_type") == "clarify"]
+    clarify_hit = sum(1 for r in clarifies if r.get("clarify"))
+    latencies = sorted(r["elapsed_ms"] for r in results)
+    summary = {
+        "total": len(results),
+        "tool_selection_accuracy": round(passed / len(results), 4) if results else None,
+        "hit_cap_rate": round(hit_caps / len(results), 4) if results else None,
+        "hit_cap_target": HIT_CAP_TARGET,
+        "clarify_trigger_rate": round(clarify_hit / len(clarifies), 4) if clarifies else None,
+        "latency_p95_ms": latencies[max(0, int(len(latencies) * 0.95) - 1)] if latencies else None,
+        "env_link": "internal",  # 内部函数层（docs/01 §3.6）
+    }
+    return {"kind": "agent", "env": {"link": "internal"},
+            "summary": summary, "cases": results, "failed_cases": [
+                {"id": r["id"], "question": r["question"]} for r in results if not r["pass"]]}
+
+
+def write_snapshot(report: dict, settings: Any) -> Path:
+    path = snapshot_path(report["kind"], judge_model_name(settings))
+    atomic_write_json(path, report)
+    return path

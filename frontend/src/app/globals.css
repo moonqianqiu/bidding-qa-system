@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+/* 双主题（用户要求支持浅色）：class 策略（.dark 挂 <html>），
+   预加载脚本（layout.tsx）在 hydration 前定 class，避免闪白。 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+  --background: #ffffff;
+  --c-panel: #f4f4f5;   /* 面板/卡片底 */
+  --c-line: #e4e4e7;    /* 边框/分隔 */
+  --c-fg: #27272a;      /* 主文本 */
+  --c-dim: #52525b;     /* 次级文本 */
+  --c-faint: #a1a1aa;   /* 弱文本/占位 */
+  --c-accent: #0284c7;  /* 实色强调（用户气泡/主题徽标） */
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #09090b; /* zinc-950 */
+  --c-panel: #1b1b1f;
+  --c-line: #2c2c31;
+  --c-fg: #e4e4e7;
+  --c-dim: #a1a1aa;
+  --c-faint: #61616a;
+  --c-accent: #0c4a6e;
+}
+
+@theme inline {
+  --color-base: var(--background);
+  --color-panel: var(--c-panel);
+  --color-line: var(--c-line);
+  --color-fg: var(--c-fg);
+  --color-dim: var(--c-dim);
+  --color-faint: var(--c-faint);
+  --color-accent: var(--c-accent);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  background-color: var(--background);
+}
+
+body {
+  background: var(--background);
+  color: var(--c-fg);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}

@@ -1,0 +1,156 @@
+"""Neo4j 客户端（docs/01 §4.2）：唯一性约束先行（否则 Batch 重跑必重复）+
+五类节点六关系 + 6 类查询模板；慢查询走 session 级超时。金额/时间在 :Project 属性。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from neo4j import GraphDatabase
+
+GRAPH_QUERY_TYPES = (
+    "subject_freq",     # 标的物频次
+    "amount_agg",       # 均价与金额分布
+    "supplier_topn",    # 供应商分布
+    "region_dist",      # 地区分布
+    "purchaser_dist",   # 采购人分布
+    "time_trend",       # 时间趋势（按月）
+)
+
+# 建图脚本必须先建（docs/01 §4.2 钉死）
+CONSTRAINTS = (
+    "CREATE CONSTRAINT IF NOT EXISTS FOR (p:Project) REQUIRE p.project_no IS UNIQUE",
+    "CREATE CONSTRAINT IF NOT EXISTS FOR (s:SubjectMatter) REQUIRE s.name IS UNIQUE",
+    "CREATE CONSTRAINT IF NOT EXISTS FOR (su:Supplier) REQUIRE su.name IS UNIQUE",
+)
+
+
+class NeoClient:
+    def __init__(self, uri: str, user: str, password: str, query_timeout: float = 30.0):
+        self._uri = uri
+        self._auth = (user, password)
+        self._driver = None
+        self._timeout = query_timeout
+
+    def driver(self):
+        if self._driver is None:
+            self._driver = GraphDatabase.driver(self._uri, auth=self._auth)
+        return self._driver
+
+    def close(self) -> None:
+        if self._driver is not None:
+            self._driver.close()
+            self._driver = None
+
+    def ping(self) -> bool:
+        try:
+            self.driver().verify_connectivity()
+            return True
+        except Exception:
+            return False
+
+    def execute(self, cypher: str, **params: Any) -> list[dict]:
+        with self.driver().session() as session:
+            return [dict(r) for r in session.run(cypher, **params)]
+
+    def write(self, cypher: str, **params: Any) -> None:
+        with self.driver().session() as session:
+            session.run(cypher, **params)
+
+    # ── 约束与重建 ──
+    def ensure_constraints(self) -> None:
+        for cql in CONSTRAINTS:  # 先建唯一性约束再导入（docs/01 §4.2）
+            self.write(cql)
+
+    def clear_all(self) -> int:
+        """清空重建入口（F5 支持清空重建）。返回删除节点数。"""
+        rows = self.execute("MATCH (n) DETACH DELETE n RETURN count(n) AS c")
+        return int(rows[0]["c"]) if rows else 0
+
+    # ── F5 upsert（MERGE 幂等；空值不建节点——「不可用」不进图谱）──
+    _UPSERT_CYPHER = """
+    MERGE (p:Project {project_no: $no})
+    SET p.name = $name, p.amount = $amount, p.publish_date = $pd
+    FOREACH (_ IN CASE WHEN $subject <> '' THEN [1] ELSE [] END |
+      MERGE (sm:SubjectMatter {name: $subject}) MERGE (p)-[:FOR]->(sm))
+    FOREACH (_ IN CASE WHEN $purchaser <> '' THEN [1] ELSE [] END |
+      MERGE (pu:Purchaser {name: $purchaser}) SET pu.region = $region
+      MERGE (pu)-[:PROCURED]->(p))
+    FOREACH (_ IN CASE WHEN $winner <> '' THEN [1] ELSE [] END |
+      MERGE (su:Supplier {name: $winner}) SET su.region = $region
+      MERGE (su)-[:WON]->(p))
+    FOREACH (_ IN CASE WHEN $agency <> '' THEN [1] ELSE [] END |
+      MERGE (a:Agency {name: $agency}) MERGE (a)-[:AGENTED]->(p))
+    FOREACH (_ IN CASE WHEN $region <> '' THEN [1] ELSE [] END |
+      MERGE (l:Location {name: $region}) SET l.level = '省' MERGE (p)-[:IN]->(l))
+    """
+
+    def upsert_projects(self, rows: list[dict[str, Any]]) -> int:
+        """批量 upsert：单会话逐行（MERGE 幂等，重跑安全）。"""
+        count = 0
+        with self.driver().session() as session:
+            for row in rows:
+                publish_date = row.get("publish_date")
+                region = (row.get("region") or "").strip()
+                session.run(self._UPSERT_CYPHER,
+                            no=str(row.get("project_no") or ""),
+                            name=row.get("project_name") or "",
+                            amount=row.get("award_amount"),
+                            pd=publish_date.isoformat() if publish_date else None,
+                            subject=(row.get("subject_matter") or "").strip(),
+                            purchaser=(row.get("purchaser") or "").strip(),
+                            winner=(row.get("winner") or "").strip(),
+                            agency=(row.get("agency") or "").strip(),
+                            region=region)
+                count += 1
+        return count
+
+    def upsert_project(self, row: dict[str, Any]) -> None:
+        self.upsert_projects([row])
+
+    # ── 6 类查询模板（docs/01 §4.2；entity 可选过滤）──
+    def query(self, query_type: str, entity: str | None = None,
+              top_n: int = 10) -> list[dict]:
+        if query_type not in GRAPH_QUERY_TYPES:
+            raise ValueError(f"未知 query_type: {query_type}")
+        if not 1 <= top_n <= 100:
+            raise ValueError("top_n 须为 1..100 整数")
+        entity_filter = "WHERE toLower(sm.name) CONTAINS toLower($entity)" if entity else ""
+        if query_type == "subject_freq":
+            return self.execute(
+                f"MATCH (sm:SubjectMatter)<-[:FOR]-(p:Project) {entity_filter} "
+                "RETURN sm.name AS label, count(p) AS projects, sum(p.amount) AS total_amount "
+                "ORDER BY projects DESC LIMIT $n", entity=entity or "", n=top_n)
+        if query_type == "amount_agg":
+            return self.execute(
+                f"MATCH (sm:SubjectMatter)<-[:FOR]-(p:Project) {entity_filter} "
+                "WHERE p.amount IS NOT NULL "
+                "RETURN sm.name AS label, count(p) AS projects, avg(p.amount) AS avg_amount, "
+                "sum(p.amount) AS total_amount ORDER BY total_amount DESC LIMIT $n",
+                entity=entity or "", n=top_n)
+        if query_type == "supplier_topn":
+            where = "WHERE toLower(su.name) CONTAINS toLower($entity)" if entity else ""
+            return self.execute(
+                f"MATCH (su:Supplier)-[:WON]->(p:Project) {where} "
+                "RETURN su.name AS label, count(p) AS projects, sum(p.amount) AS total_amount "
+                "ORDER BY total_amount DESC LIMIT $n", entity=entity or "", n=top_n)
+        if query_type == "region_dist":
+            return self.execute(
+                "MATCH (p:Project)-[:IN]->(l:Location) "
+                "RETURN l.name AS label, count(p) AS projects, sum(p.amount) AS total_amount "
+                "ORDER BY projects DESC LIMIT $n", n=top_n)
+        if query_type == "purchaser_dist":
+            return self.execute(
+                "MATCH (pu:Purchaser)-[:PROCURED]->(p:Project) "
+                "RETURN pu.name AS label, count(p) AS projects, sum(p.amount) AS total_amount "
+                "ORDER BY projects DESC LIMIT $n", n=top_n)
+        # time_trend：按月
+        return self.execute(
+            "MATCH (p:Project) WHERE p.publish_date IS NOT NULL "
+            "RETURN left(p.publish_date, 7) AS label, count(p) AS projects, "
+            "sum(p.amount) AS total_amount ORDER BY label LIMIT $n", n=top_n)
+
+    def counts(self) -> dict[str, int]:
+        rows = self.execute(
+            "MATCH (n) RETURN labels(n)[0] AS label, count(*) AS c")
+        return {r["label"]: int(r["c"]) for r in rows}

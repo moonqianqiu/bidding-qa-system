@@ -1,0 +1,60 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# AI Coding
+.atomcode
+.claude
+.codebuddy
+.codex
+.zcode
+
+# Autoresearch（账本由插件路径排除，不入库）
+
+autoresearch-dashboard.html
+
+# Local green services & pipeline data
+# 注意：不能整目录忽略 data/（.gitkeep 锚点将无法取回）；忽略易变子路径
+services/
+data/db/
+data/run/
+data/cache/
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+.cache/
+
+# Secrets
+.env
+backend/.env
+
+# 评测快照改本地参考（2026-11-14 重构定版：产物不入库，与 docs/01 §4.4 滚动保留口径一致）
+backend/eval/results/
+
+# IMA skill 凭证（2026-11-07 用户指定存放于 skill 目录，不入库）
+credentials.local.json
+
+# ima 知识库本地参考导出（不入库，2026-11-07 用户指定）
+参考资料-招投标智能问答应用系统/
+
+.pytest_cache
+
+# 测试临时产物兜底（个别沙箱环境缺 TEMP 时 tempfile 会兜底进 backend/，勿入库）
+backend/jieba.cache
+backend/pytest-of-*/
+backend/tmp????????
+tmp????????
+
+.auto
+
+# 汇报物料（2026-11-09 用户指定：加入排除，不入库）
+汇报/
+

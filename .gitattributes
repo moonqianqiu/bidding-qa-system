@@ -1,0 +1,7 @@
+# 行尾契约：bash 脚本必须 LF（CRLF 会让 Git Bash 报 '\r' command not found）
+*.sh text eol=lf
+*.py text eol=lf
+# Windows 原生脚本用 CRLF
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
