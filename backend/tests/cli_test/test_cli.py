@@ -190,3 +190,48 @@ def test_doctor_source_type_unavailable_is_honest(monkeypatch, capsys,
     out = capsys.readouterr().out
     assert "source_type 分布: 不可用" in out
     assert "source_type 分布: {}" not in out  # 绝不记 0 / 空 dict 伪装
+
+
+# ── ingest graph：归一是显式付费动作，默认/试运行不建 chat ──
+def test_ingest_graph_normalize_and_mapping_file_are_mutually_exclusive():
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["ingest", "graph", "--normalize", "--mapping-file", "x.json"])
+    assert exc.value.code == 2
+
+
+def test_ingest_graph_missing_mapping_file_returns_2(capsys):
+    assert cli.main(["ingest", "graph", "--mapping-file", "no-such.json"]) == 2
+    assert "映射文件不存在" in capsys.readouterr().err
+
+
+def _patch_graph_deps(monkeypatch, captured: dict):
+    monkeypatch.setattr("bidqa.database.factory.build_pg", lambda: object())
+    monkeypatch.setattr("bidqa.database.factory.build_neo", lambda: object())
+
+    def fake_build_graph(pg, neo, **kwargs):
+        captured.update(kwargs)
+        return {"rows": 0, "dry_run": True, "mapping_items": 0,
+                "review_items": 0, "normalize_calls": 0, "failed_batches": []}
+
+    monkeypatch.setattr("bidqa.ingest.graph_build.build_graph", fake_build_graph)
+
+
+def test_ingest_graph_dry_run_skips_chat_without_normalize(monkeypatch, capsys):
+    def boom():
+        raise AssertionError("未加 --normalize 不应构建 chat")
+
+    monkeypatch.setattr("bidqa.container.build_agent_stack", boom)
+    captured: dict = {}
+    _patch_graph_deps(monkeypatch, captured)
+    assert cli.main(["ingest", "graph", "--dry-run"]) == 0
+    assert captured["chat"] is None and captured["normalize"] is False
+    assert "恒等映射预览" in capsys.readouterr().out
+
+
+def test_ingest_graph_normalize_builds_chat(monkeypatch):
+    monkeypatch.setattr("bidqa.container.build_agent_stack", lambda: ("fake-chat",))
+    captured: dict = {}
+    _patch_graph_deps(monkeypatch, captured)
+    assert cli.main(["ingest", "graph", "--normalize", "--dry-run"]) == 0
+    assert captured["chat"] == "fake-chat"
+    assert captured["normalize"] is True

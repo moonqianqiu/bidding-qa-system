@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 
@@ -111,12 +112,28 @@ def _ingest_graph(args) -> int:
     from bidqa.database.factory import build_neo, build_pg
     from bidqa.ingest.graph_build import build_graph
 
+    if args.mapping_file and not Path(args.mapping_file).exists():
+        print(f"映射文件不存在：{args.mapping_file}", file=sys.stderr)
+        return 2
     pg, neo = build_pg(), build_neo()
     if pg is None or neo is None:
         print("PG/Neo4j 未配置或不可用", file=sys.stderr)
         return 2
-    chat = build_agent_stack()[0]  # 实体归一用主模型（未配置则跳过归一，见 graph_build）
+    # 归一是付费动作：只有显式 --normalize 才构建主模型（--mapping-file 零模型调用）
+    chat = None
+    if args.normalize:
+        chat = build_agent_stack()[0]
+        if chat is None:
+            print("主模型未配置，无法执行 --normalize", file=sys.stderr)
+            return 2
+    if args.dry_run and not args.normalize and not args.mapping_file:
+        print("提示：未启用 --normalize/--mapping-file，本次为恒等映射预览（零模型调用）")
     result = build_graph(pg, neo, chat=chat, batch=args.batch_id,
-                         dry_run=args.dry_run, clear=args.clear)
-    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+                         dry_run=args.dry_run, clear=args.clear,
+                         normalize=args.normalize, mapping_file=args.mapping_file)
+    # 不把上千条映射全量打到终端：摘要 + 产物路径（完整内容在 mapping JSON）
+    keys = ("rows", "dry_run", "mapping_items", "review_items", "mapping_source",
+            "normalize_calls", "failed_batches", "mapping_json", "review_csv", "counts")
+    print(json.dumps({k: result[k] for k in keys if k in result},
+                     ensure_ascii=False, indent=2, default=str))
     return 0
