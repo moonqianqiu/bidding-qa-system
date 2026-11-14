@@ -217,3 +217,19 @@ def test_max_tokens_not_injected_into_chat_raw():
     client.chat_raw(payload)  # 评测/调试原样透传，预算不注入
     body = _json.loads(respx.calls.last.request.read().decode())
     assert "max_tokens" not in body
+
+
+@respx.mock
+def test_extra_body_merged_into_budgeted_but_not_raw():
+    respx.post(f"{BASE}/chat/completions").mock(side_effect=[
+        httpx.Response(200, json={"choices": [{"message": {"content": "答案"}}]}),
+        httpx.Response(200, json={"id": "x", "choices": []}),
+    ])
+    client = ChatClient(BASE, "sk", "m",
+                        extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+    client.chat(MESSAGES)
+    body = _json.loads(respx.calls[0].request.read().decode())
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    client.chat_raw({"model": "m", "messages": MESSAGES})
+    raw_body = _json.loads(respx.calls[1].request.read().decode())
+    assert "chat_template_kwargs" not in raw_body  # 原样透传不被附加字段污染

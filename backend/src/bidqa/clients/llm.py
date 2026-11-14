@@ -48,9 +48,12 @@ def _retry_429_delay(headers: Any, attempt: int) -> float:
 
 class ChatClient:
     def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 120.0,
-                 max_tokens: int | None = None):
+                 max_tokens: int | None = None,
+                 extra_body: dict[str, Any] | None = None):
         self.model = model
         self._max_tokens = max_tokens
+        # 通用 OpenAI-compatible 附加字段（模型族开关，如关闭思考）；chat_raw 原样透传不受影响
+        self.extra_body = dict(extra_body or {})
         self._retry_429 = retry_429_eligible(base_url)
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
@@ -63,9 +66,10 @@ class ChatClient:
         """注入主槽位输出预算（CHAT_MAX_TOKENS）：思考型上游先烧 reasoning 再出正文，
         预算不足时正文为空（2026-11-11 trace 9a86dbb765a9：图表正常、正文空）；
         None = 不传，维持上游默认。chat_raw 评测透传不受影响。"""
+        merged = {**self.extra_body, **payload}
         if self._max_tokens:
-            return {**payload, "max_tokens": self._max_tokens}
-        return payload
+            merged["max_tokens"] = self._max_tokens
+        return merged
 
     # ── 非流式 ──
     def chat(self, messages: list[dict], temperature: float = 0.3) -> str:

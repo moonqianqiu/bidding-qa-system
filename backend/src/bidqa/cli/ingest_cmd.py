@@ -141,7 +141,8 @@ def _ingest_graph(args) -> int:
                          normalize=args.normalize, mapping_file=args.mapping_file)
     # 不把上千条映射全量打到终端：摘要 + 产物路径（完整内容在 mapping JSON）
     keys = ("rows", "dry_run", "mapping_items", "review_items", "mapping_source",
-            "normalize_calls", "failed_batches", "mapping_json", "review_csv", "counts")
+            "normalize_calls", "normalize_fields", "oversized_groups",
+            "failed_batches", "mapping_json", "review_csv", "counts")
     summary = {k: result[k] for k in keys if k in result}
     if args.normalize:
         summary["normalize_channel"] = args.normalize_channel

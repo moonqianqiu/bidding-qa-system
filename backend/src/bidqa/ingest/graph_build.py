@@ -24,13 +24,21 @@ from bidqa.database.neo4j import NeoClient
 logger = logging.getLogger(__name__)
 
 MERGE_CONFIDENCE = 0.85
-# 分批上限：名称数 + 字符数双约束（中文实体名通常 4-30 字，200 名 ≈ 2-6k 字符）
-NORMALIZE_BATCH_NAMES = 200
+# 分批上限：名称数 + 字符数双约束。单批 200 名实测模型会「为归类而归类」
+# （2026-11-14：subject_matter 200 名 → 35 项自动合并，含办公桌→会议桌、
+# 移动硬盘→U盘等错误；同数据 50 名一批只出 3 组且合理），故默认 50。
+NORMALIZE_BATCH_NAMES = 50
 NORMALIZE_BATCH_CHARS = 4000
-REVIEW_DIR = Path("data/processed")
+# 单组合并上限：超过即视为「病态归类」，整组降级复核不自动合并
+NORMALIZE_MAX_GROUP = 8
+# 产物固定到仓库根 data/processed（CLI 从 backend/ 启动时 CWD 不是仓根）
+REVIEW_DIR = Path(__file__).resolve().parents[4] / "data" / "processed"
 
 # 五类实体字段：抽取、归一、行内改写、映射文件共用同一顺序（单一事实来源）
 ENTITY_FIELDS = ("subject_matter", "winner", "purchaser", "agency", "region")
+# LLM 归一仅限组织实体：标的物是「同类不同物」重灾区（打印机≠激光打印机），
+# 地区值少且规则清晰；两者保持恒等，避免错误合并污染聚合。
+NORMALIZE_FIELDS = ("winner", "purchaser", "agency")
 _FIELD_HINTS = {
     "subject_matter": "标的物",
     "winner": "中标供应商",
@@ -75,11 +83,18 @@ def _batch_names(names: list[str], *, max_names: int = NORMALIZE_BATCH_NAMES,
 
 
 def _parse_reply(raw: str) -> dict[str, Any]:
-    """从模型回复中提取严格 JSON 对象；无 JSON / 非对象 → ValueError（由调用方按批记失败）。"""
-    start, end = raw.find("{"), raw.rfind("}")
-    if start < 0 or end <= start:
+    """从模型回复中提取第一个 JSON 对象；无 JSON / 非对象 → ValueError（按批记失败）。
+
+    用 raw_decode 而非首尾括号切片：模型偶尔在 JSON 后追加解释/第二个对象，
+    首尾切片会报 Extra data，raw_decode 只取第一个完整对象。
+    """
+    start = raw.find("{")
+    if start < 0:
         raise ValueError("回复中无 JSON 对象")
-    data = json.loads(raw[start:end + 1])
+    try:
+        data, _ = json.JSONDecoder().raw_decode(raw[start:])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"回复 JSON 解析失败: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError("回复 JSON 不是对象")
     return data
@@ -94,22 +109,79 @@ def _as_confidence(value: Any) -> float:
     return conf if conf == conf else 0.0  # NaN 不进自动合并
 
 
+_CORP_SUFFIXES = ("股份有限公司", "有限责任公司", "有限公司", "集团有限公司", "集团", "公司")
+_PUNCT_TABLE = str.maketrans("", "", " \t\r\n（）()·,，、;；:：\"'“”")
+
+
+def _plain(name: str) -> str:
+    return name.translate(_PUNCT_TABLE)
+
+
+def _strip_corp(name: str) -> str:
+    """反复剥掉尾部公司后缀（保留至少 2 字，防剥空）。"""
+    text = _plain(name)
+    changed = True
+    while changed:
+        changed = False
+        for suffix in _CORP_SUFFIXES:
+            if text.endswith(suffix) and len(text) > len(suffix) + 1:
+                text = text[:-len(suffix)]
+                changed = True
+                break
+    return text
+
+
+def _drop_parens(name: str) -> str:
+    """去掉成对括号及其内容（全角/半角）。"""
+    out: list[str] = []
+    depth = 0
+    for ch in name:
+        if ch in "（(":
+            depth += 1
+        elif ch in "）)":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            out.append(ch)
+    return "".join(out)
+
+
+def _conservative_merge_ok(alias: str, canonical: str) -> bool:
+    """确定性合并闸门：只允许「明显同实体」的机械写法差异自动合并。
+
+    允许：去空白/标点后相等；重复拼接脏值（A×2）；括号别名；公司后缀差异。
+    其余（分公司/校区/附属/第 N 小学/水厂等附加限定词）一律不自动合并——模型
+    对这类分支实体常给高置信度错并（2026-11-14 全量 dry-run 实证）。
+    """
+    a, c = _plain(alias), _plain(canonical)
+    if not a or not c or a == c:
+        return False
+    if a == c * 2 or c == a * 2:
+        return True
+    if _plain(_drop_parens(alias)) == c or a == _plain(_drop_parens(canonical)):
+        return True
+    return _strip_corp(alias) == _strip_corp(canonical)
+
+
 def _collect_groups(data: dict[str, Any], field: str, batch_names: list[str],
                     mapping: dict[str, dict[str, str]],
-                    review: list[dict[str, Any]]) -> int:
-    """校验并收集一批的合并组；返回实际采纳的组数。
+                    review: list[dict[str, Any]]) -> tuple[int, int]:
+    """校验并收集一批的合并组；返回 (实际采纳组数, 超限组数)。
 
     模型可能编造名称——凡不属于本批名称集合的一律丢弃（防幻觉污染映射）。
+    单组超过 NORMALIZE_MAX_GROUP 视为病态归类：不自动合并，整组降级复核。
+    置信度达标后还要过确定性闸门（_conservative_merge_ok）：分支/校区/附属等
+    附加限定词不进自动映射，只进复核。
     """
     groups = data.get("groups")
     if not isinstance(groups, list):
-        return 0
+        return 0, 0
     conf = data.get("confidence")
     if not isinstance(conf, dict):
         conf = {}
     valid = set(batch_names)
     table = mapping[field]
     merged = 0
+    oversized = 0
     for group in groups:
         if not isinstance(group, list) or len(group) < 2:
             continue
@@ -120,6 +192,16 @@ def _collect_groups(data: dict[str, Any], field: str, batch_names: list[str],
         if canonical not in valid:
             logger.debug("归一丢弃：标准名不在本批 field=%s canonical=%s", field, canonical)
             continue
+        if len(cleaned) > NORMALIZE_MAX_GROUP:
+            oversized += 1
+            logger.warning("归一超限组降级复核 field=%s canonical=%s names=%d (>%d)",
+                           field, canonical, len(cleaned), NORMALIZE_MAX_GROUP)
+            for alias in cleaned[1:]:
+                if alias in valid and alias != canonical:
+                    review.append({"field": field, "alias": alias,
+                                   "canonical": canonical, "confidence": 0.0,
+                                   "reason": "oversized_group"})
+            continue
         merged += 1
         for alias in cleaned[1:]:
             if not alias or alias == canonical or alias not in valid:
@@ -127,12 +209,17 @@ def _collect_groups(data: dict[str, Any], field: str, batch_names: list[str],
             if alias in table:  # 重复组：先到先得，避免同一别名两套标准名
                 continue
             confidence = _as_confidence(conf.get(alias))
-            if confidence >= MERGE_CONFIDENCE:
+            if confidence >= MERGE_CONFIDENCE and _conservative_merge_ok(alias, canonical):
                 table[alias] = canonical
+            elif confidence >= MERGE_CONFIDENCE:
+                review.append({"field": field, "alias": alias, "canonical": canonical,
+                               "confidence": confidence,
+                               "reason": "not_simple_variant"})
             else:
-                review.append({"field": field, "alias": alias,
-                               "canonical": canonical, "confidence": confidence})
-    return merged
+                review.append({"field": field, "alias": alias, "canonical": canonical,
+                               "confidence": confidence,
+                               "reason": "low_confidence"})
+    return merged, oversized
 
 
 def _collapse(mapping: dict[str, dict[str, str]]) -> None:
@@ -162,14 +249,20 @@ def normalize_entities(entities: dict[str, list[str]], chat: ChatClient | None,
     mapping: dict[str, dict[str, str]] = {f: {} for f in entities}
     review: list[dict[str, Any]] = []
     stats: dict[str, Any] = {
-        "calls": 0, "groups": 0, "failed_batches": [], "fields": {},
+        "calls": 0, "groups": 0, "oversized_groups": 0,
+        "failed_batches": [], "fields": {},
     }
     if chat is None:
         return mapping, review, stats
 
     for field, names in entities.items():
+        if field not in NORMALIZE_FIELDS:
+            stats["fields"][field] = {"names": len(names), "batches": 0,
+                                      "normalized": False}
+            continue
         batches = list(_batch_names(names, max_names=batch_size)) if len(names) >= 2 else []
-        stats["fields"][field] = {"names": len(names), "batches": len(batches)}
+        stats["fields"][field] = {"names": len(names), "batches": len(batches),
+                                  "normalized": True}
         for index, batch in enumerate(batches, 1):
             stats["calls"] += 1
             try:
@@ -188,7 +281,9 @@ def normalize_entities(entities: dict[str, list[str]], chat: ChatClient | None,
                     "names": len(batch), "error": str(exc)[:200],
                 })
                 continue
-            stats["groups"] += _collect_groups(data, field, batch, mapping, review)
+            merged, oversized = _collect_groups(data, field, batch, mapping, review)
+            stats["groups"] += merged
+            stats["oversized_groups"] += oversized
 
     _collapse(mapping)
     return mapping, review, stats
@@ -201,7 +296,7 @@ def write_review_csv(review: list[dict[str, Any]], batch: str) -> Path | None:
     path = REVIEW_DIR / f"graph_merge_review_{batch}.csv"
     with path.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(
-            f, fieldnames=["field", "alias", "canonical", "confidence"])
+            f, fieldnames=["field", "alias", "canonical", "confidence", "reason"])
         writer.writeheader()
         writer.writerows(review)
     return path
@@ -284,7 +379,8 @@ def build_graph(pg: PgConn, neo: NeoClient, chat: ChatClient | None = None,
     entities = extract_entities(rows)
 
     review: list[dict[str, Any]] = []
-    stats: dict[str, Any] = {"calls": 0, "groups": 0, "failed_batches": [], "fields": {}}
+    stats: dict[str, Any] = {"calls": 0, "groups": 0, "oversized_groups": 0,
+                             "failed_batches": [], "fields": {}}
     review_path: Path | None = None
     mapping_path: Path | None = None
     mapping_source = "identity"
@@ -312,7 +408,8 @@ def build_graph(pg: PgConn, neo: NeoClient, chat: ChatClient | None = None,
         print(f"[dry-run] 将写入 {len(rows)} 个 Project（batch={batch}）；"
               f"实体组: { {k: len(v) for k, v in entities.items()} }；"
               f"自动归一 {merged_items} 项（来源={mapping_source}）；"
-              f"待人工复核 {len(review)} 项；失败批次 {len(stats['failed_batches'])}")
+              f"待人工复核 {len(review)} 项；失败批次 {len(stats['failed_batches'])}；"
+              f"超限组 {stats['oversized_groups']}")
         for row in rows[:5]:
             print("  ", {k: row.get(k) for k in
                          ("project_no", "subject_matter", "winner", "region")})
@@ -323,6 +420,8 @@ def build_graph(pg: PgConn, neo: NeoClient, chat: ChatClient | None = None,
                 "mapping_items": merged_items, "review": review,
                 "review_items": len(review), "mapping_source": mapping_source,
                 "normalize_calls": stats["calls"],
+                "normalize_fields": list(NORMALIZE_FIELDS),
+                "oversized_groups": stats["oversized_groups"],
                 "failed_batches": stats["failed_batches"],
                 "mapping_json": str(mapping_path) if mapping_path else None,
                 "review_csv": str(review_path) if review_path else None}
@@ -336,6 +435,8 @@ def build_graph(pg: PgConn, neo: NeoClient, chat: ChatClient | None = None,
             "mapping_items": merged_items, "review": review,
             "review_items": len(review), "mapping_source": mapping_source,
             "normalize_calls": stats["calls"],
+            "normalize_fields": list(NORMALIZE_FIELDS),
+            "oversized_groups": stats["oversized_groups"],
             "failed_batches": stats["failed_batches"],
             "mapping_json": str(mapping_path) if mapping_path else None,
             "review_csv": str(review_path) if review_path else None,

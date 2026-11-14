@@ -49,8 +49,11 @@ def build_subject_batch_chat() -> ChatClient | None:
     s = get_settings()
     if not s.has_subject_batch:
         return None
+    # 批量模型是思考型：200 名一批实测 completion 4096 全烧在 reasoning、正文为空；
+    # chat_template_kwargs 关闭思考后同一批正常出 JSON（2026-11-14 探针：275→21 tokens）。
     return ChatClient(s.SUBJECT_BATCH_BASE_URL, s.SUBJECT_BATCH_API_KEY,
-                      s.SUBJECT_BATCH_MODEL)
+                      s.SUBJECT_BATCH_MODEL,
+                      extra_body={"chat_template_kwargs": {"enable_thinking": False}})
 
 
 @lru_cache(maxsize=1)

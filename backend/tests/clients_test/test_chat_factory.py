@@ -22,3 +22,5 @@ def test_subject_batch_chat_uses_batch_slot(monkeypatch, settings_factory) -> No
     client = build_subject_batch_chat()
     assert isinstance(client, ChatClient)
     assert client.model == "qwen-batch"
+    # 批量模型思考开关随客户端走（关闭思考，防 reasoning 烧穿输出预算）
+    assert client.extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
