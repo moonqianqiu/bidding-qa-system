@@ -2,7 +2,7 @@
 
 > 可自托管的招投标领域 RAG + Agent 问答系统：用户用自然语言提问，系统自动判断去
 > **知识库 / 知识图谱 / 业务数据库 / 联网** 取数，给出**带来源引用**的答案，数字类问题自动配图表。
-> 状态：**v1.0 已交付**——后端测试 367 例、Agent 评测 13/13、e2e 三走向绿。
+> 状态：**v2.0 重构版**（2026-11-14 职责拆分+依赖边界重建，基线 v1.0 见 tag）——后端测试 414 例、分层守卫+变异验证通过。
 > 本文边界：只回答「这是什么、怎么跑起来、下一份文档读哪个」。
 
 ## 1. 能力与边界
@@ -28,8 +28,8 @@
 ## 2. 架构与技术栈
 
 ```
-frontend/  Next.js 16 + React 19 + Tailwind 4      问答页 · 评估页 · 监控抽屉
-backend/   FastAPI（Python 3.14 + uv，src/bidqa）   api · agent · tools · rag · clients · database · ingest · eval · obs
+frontend/  Next.js 16 + React 19 + Tailwind 4      app 薄壳 + features/chat · features/console · lib
+backend/   FastAPI（Python 3.14 + uv，src/bidqa）   api · application · agent · tools · rag · clients · database · auth · ingest · eval · obs · cli
 services/  绿色安装数据服务                          Qdrant / PostgreSQL / Neo4j 官方 zip，数据在 data/db/
 deploy/    启停编排脚本                              start / stop / status / e2e / 服务安装
 eval/      黄金集与评测产物                          golden/（用例，入 git）
@@ -81,7 +81,7 @@ cd frontend && npm run dev                                            # http://1
 ## 6. 质量与验收
 
 ```bash
-cd backend && uv run pytest -q        # 全量全绿（服务离线时集成例 skip 属预期；计数见部署手册 §4）
+cd backend && uv run pytest -q        # 全量全绿（服务离线时集成例 skip 属预期；当前 414 例）
 cd frontend && npx tsc --noEmit
 bash deploy/e2e-chat.sh               # SSE 三走向（机器断言版；真实调用主模型）
 cd backend && uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent

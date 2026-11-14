@@ -35,7 +35,7 @@ SSE 事件 / 错误码 / 图表规格 / 请求 schema / 数据模型 变更：
 
 ## 常见改动剧本
 
-- **加工具**：`tools/` 新建（继承 BaseTool，`args_model` + 描述写清分工——描述质量直接影响工具选择率）→ 注册进 `api/chat_stream.py` 的 registry → `eval/golden/agent_v0.jsonl` 加用例 → `eval agent` 验证工具选择率
+- **加工具**：`tools/` 新建（继承 BaseTool，`args_model` + 描述写清分工——描述质量直接影响工具选择率）→ 注册进 `agent/assembly.py` 的 `build_registry`（唯一实现，worker 与评测共用）→ `eval/golden/agent_v0.jsonl` 加用例 → `eval agent` 验证工具选择率
 - **加配置项**：`config.py` 声明（能力型默认值）→ `.env.example` 登记 → `docs/01` §5 三列表加行（含缺失时行为）
 - **加界面文案**：只改 `frontend/src/lib/i18n.tsx`（zh/en 两份都加），组件里用 `t.xxx`——禁止组件写死中文
 - **回滚版本**：`git checkout <tag>` → 重启后端 → `status.sh` + `/api/health` + 一次 e2e（演练记录见开发日志）
@@ -46,6 +46,7 @@ SSE 事件 / 错误码 / 图表规格 / 请求 schema / 数据模型 变更：
 - 契约测试先行；用变异测试确认断言真的能红
 - 测试不得污染真实仓库：落盘一律指向临时目录，"文件写在哪"类断言全程打桩
 - 「导入是否引入重量级依赖」类断言必须在**子进程**里做（本进程恒绿的空测试）
+- 分层守卫 `tests/test_layering.py`（AST 静态扫描）随改随守：新增跨层依赖先看 §3.1 边界图，违规即红；测试目录=源码目录（api_test/auth_test/…与 src 镜像）
 
 ## 文档同步纪律（每个事实只有一个归属）
 

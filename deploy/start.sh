@@ -9,7 +9,7 @@ mkdir -p "$RUN"
 
 # Windows 踩坑：管理员账户的令牌会被 initdb/postgres 自我降权（CreateRestrictedToken），
 # 恰好剥掉 Global\ 共享内存所需的 SeCreateGlobalPrivilege（错误 1314）。
-# 账户已授「创建全局对象」权利（deploy/grant-elevate.cmd），PG_RESTRICT_EXEC 跳过自我降权。
+# 账户已授「创建全局对象」权利（deploy/grant-elevate.bat），PG_RESTRICT_EXEC 跳过自我降权。
 export PG_RESTRICT_EXEC=1
 
 port_up() { netstat -an | grep LISTENING | grep -qE "[:.]$1[[:space:]]"; }
@@ -43,7 +43,7 @@ echo "== 1/4 PostgreSQL =="
 if port_up 5432; then
   echo "  已在运行 (:5432)"
 elif [ ! -f "$ROOT/data/db/postgres/PG_VERSION" ]; then
-  echo "  跳过：数据目录未初始化（先运行一次 deploy/grant-elevate.cmd 并重新登录，再执行 deploy/install-services.sh）"
+  echo "  跳过：数据目录未初始化（先运行一次 deploy/grant-elevate.bat 并重新登录，再执行 deploy/install-services.sh）"
 else
   "$ROOT/services/postgresql/bin/pg_ctl.exe" start -D "$ROOT/data/db/postgres" -l "$RUN/postgres.log" -o "-p 5432" >/dev/null
   wait_port 5432 PostgreSQL 60 || echo "  警告：PostgreSQL 未就绪，对应能力将降级（docs/01 §5）"
