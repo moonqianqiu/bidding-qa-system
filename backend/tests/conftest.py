@@ -58,26 +58,27 @@ CORE_ENV = {
 
 @pytest.fixture(autouse=True)
 def _reset_caches():
-    """每个用例前后清空 get_settings 与 service 层缓存，防跨用例泄漏。"""
-    from bidqa import service
+    """每个用例前后清空 get_settings 与各工厂缓存，防跨用例泄漏（C5：工厂归位后按真名清理）。"""
+    from bidqa.auth import factory as auth_factory
+    from bidqa.clients import chat_factory, web_factory
+    from bidqa.database import factory as db_factory
+    from bidqa.rag import factory as rag_factory
 
-    get_settings.cache_clear()
-    service.build_repo.cache_clear()
-    service.build_embedding.cache_clear()
-    service.build_reranker.cache_clear()
-    service.build_chat.cache_clear()
-    service.build_retriever.cache_clear()
-    service.build_pg.cache_clear()
-    service.build_web_clients.cache_clear()
+    def _clear():
+        get_settings.cache_clear()
+        db_factory.build_repo.cache_clear()
+        rag_factory.build_embedding.cache_clear()
+        rag_factory.build_reranker.cache_clear()
+        rag_factory.build_retriever.cache_clear()
+        chat_factory.build_chat.cache_clear()
+        chat_factory.build_vision.cache_clear()
+        db_factory.build_pg.cache_clear()
+        web_factory.build_web_clients.cache_clear()
+        auth_factory.build_users_store.cache_clear()
+
+    _clear()
     yield
-    get_settings.cache_clear()
-    service.build_repo.cache_clear()
-    service.build_embedding.cache_clear()
-    service.build_reranker.cache_clear()
-    service.build_chat.cache_clear()
-    service.build_retriever.cache_clear()
-    service.build_pg.cache_clear()
-    service.build_web_clients.cache_clear()
+    _clear()
 
 
 @pytest.fixture

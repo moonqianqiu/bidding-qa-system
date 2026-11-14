@@ -2,7 +2,7 @@
 
 import pytest
 
-from bidqa import cli
+from bidqa.cli import main as cli  # C5：入口在 cli.main（patch 缝=模块级 get_settings）
 from bidqa.config import Settings
 
 
@@ -66,7 +66,7 @@ class FakeStore:
 
 def test_user_add_and_list(monkeypatch, capsys):
     store = FakeStore()
-    monkeypatch.setattr("bidqa.service.build_users_store", lambda: store)
+    monkeypatch.setattr("bidqa.auth.factory.build_users_store", lambda: store)
     assert cli.main(["user", "add", "bob", "--role", "user", "--password", "pw"]) == 0
     assert store.created == [("bob", "user")]
     assert cli.main(["user", "add", "bob", "--password", "pw"]) == 1  # 重名拒绝
@@ -76,14 +76,14 @@ def test_user_add_and_list(monkeypatch, capsys):
 
 
 def test_user_reset_unknown_returns_1(monkeypatch, capsys):
-    monkeypatch.setattr("bidqa.service.build_users_store", lambda: FakeStore())
+    monkeypatch.setattr("bidqa.auth.factory.build_users_store", lambda: FakeStore())
     assert cli.main(["user", "reset", "ghost", "--password", "x"]) == 1
     assert "不存在" in capsys.readouterr().err
 
 
 def test_user_disable_enable(monkeypatch):
     store = FakeStore()
-    monkeypatch.setattr("bidqa.service.build_users_store", lambda: store)
+    monkeypatch.setattr("bidqa.auth.factory.build_users_store", lambda: store)
     assert cli.main(["user", "disable", "admin"]) == 0
     assert cli.main(["user", "enable", "admin"]) == 0
     assert store.disabled == [("admin", True), ("admin", False)]
@@ -95,7 +95,7 @@ def test_doctor_armed_reports_users_and_default_password(monkeypatch, capsys,
     """armed：doctor 报用户数/游客开关；默认口令未改时告警。"""
     monkeypatch.setattr(cli, "get_settings",
                         lambda: settings_factory(USERS_ENABLED="true"))
-    monkeypatch.setattr("bidqa.service.build_users_store", lambda: FakeStore())
+    monkeypatch.setattr("bidqa.auth.factory.build_users_store", lambda: FakeStore())
     assert cli.main(["doctor"]) == 0
     out = capsys.readouterr().out
     assert "用户体系" in out and "users=1" in out and "游客开关=开" in out
@@ -129,8 +129,8 @@ def test_ingest_pdf_dry_run_does_not_write(monkeypatch, capsys):
         calls["repo"] += 1
         raise AssertionError("dry-run 不应建 repo")
 
-    monkeypatch.setattr("bidqa.service.build_repo", no_repo)
-    monkeypatch.setattr("bidqa.service.build_embedding",
+    monkeypatch.setattr("bidqa.database.factory.build_repo", no_repo)
+    monkeypatch.setattr("bidqa.rag.factory.build_embedding",
                         lambda: calls.__setitem__("embedding", 1))
     assert cli.main(_pdf_args("--dry-run")) == 0
     out = capsys.readouterr().out
@@ -144,8 +144,8 @@ def test_ingest_pdf_writes_non_faq_source_type(monkeypatch):
     repo = QdrantRepo(url=":memory:", collection="test_cli_pdf_v1")
     repo.ensure_collection()
     monkeypatch.setattr("bidqa.ingest.pdf_parse.parse_pdf", _fake_parse_pdf)
-    monkeypatch.setattr("bidqa.service.build_repo", lambda: repo)
-    monkeypatch.setattr("bidqa.service.build_embedding", lambda: None)
+    monkeypatch.setattr("bidqa.database.factory.build_repo", lambda: repo)
+    monkeypatch.setattr("bidqa.rag.factory.build_embedding", lambda: None)
     try:
         assert cli.main(_pdf_args()) == 0
         assert repo.source_type_counts().get("法规", 0) > 0
@@ -172,7 +172,7 @@ class _FakeRepoDist:
 def test_doctor_reports_source_type_distribution(monkeypatch, capsys,
                                                  settings_factory):
     monkeypatch.setattr(cli, "get_settings", lambda: settings_factory())
-    monkeypatch.setattr("bidqa.service.build_repo",
+    monkeypatch.setattr("bidqa.database.factory.build_repo",
                         lambda: _FakeRepoDist({"FAQ": 75, "法规": 3}))
     assert cli.main(["doctor"]) == 0
     out = capsys.readouterr().out
@@ -185,7 +185,7 @@ def test_doctor_source_type_unavailable_is_honest(monkeypatch, capsys,
         raise RuntimeError("qdrant down")
 
     monkeypatch.setattr(cli, "get_settings", lambda: settings_factory())
-    monkeypatch.setattr("bidqa.service.build_repo", boom)
+    monkeypatch.setattr("bidqa.database.factory.build_repo", boom)
     assert cli.main(["doctor"]) == 0
     out = capsys.readouterr().out
     assert "source_type 分布: 不可用" in out

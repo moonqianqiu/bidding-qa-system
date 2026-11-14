@@ -102,7 +102,7 @@ def _prefix_matcher(pkg: str) -> Callable[[str], str | None]:
 
 # ── 规则与 allowlist（条目须注明 owner/移除步骤；双向一致由 test_allowlist_matches 断言）──
 ALLOWLIST: dict[str, set[tuple[str, str]]] = {
-    # 过渡：bidqa.service 组合根按职责拆入窄 factory（重构方案 §4.1）
+    # bidqa.service 组合根已退役（C5 删除）；规则保留为永久护栏防其借尸还魂
     "R6-api不得import组合根service": set(),  # C4：api→service 全部清零（各归窄工厂）
     # 过渡：图片 ref store 归 application/vision（C3 迁移后清零）
     "R5-chat不得依赖api.vision": set(),  # C3 归 application/vision 后清零——空集存档

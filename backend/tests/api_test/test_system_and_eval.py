@@ -93,7 +93,7 @@ def test_eval_runs_list_and_detail(settings_factory, monkeypatch, tmp_path) -> N
 
 def test_prune_cli(pg_client) -> None:  # noqa: ARG001
     """H7 prune：dry-run 不删；真实执行删除 N 天前数据。"""
-    from bidqa.cli import main
+    from bidqa.cli.main import main  # C5：入口在 cli.main
 
     assert main(["prune", "--days", "30", "--dry-run"]) == 0
     assert main(["prune", "--days", "30"]) == 0

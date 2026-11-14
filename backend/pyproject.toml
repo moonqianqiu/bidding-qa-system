@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-bidqa = "bidqa.cli:main"
+bidqa = "bidqa.cli.main:main"  # C5：cli 拆包后入口在 cli.main（包 __init__ 保持为空，AGENTS 硬约束 5）
 
 [dependency-groups]
 dev = [

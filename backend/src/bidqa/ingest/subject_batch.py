@@ -240,3 +240,12 @@ def run_sync(requests: list[dict[str, Any]], chat_fn: Callable[[list[dict], floa
                           f"重试 {counters['retries']}）", flush=True)
     return {"total": len(requests), "done_before": len(done_before),
             "ok": counters["ok"], "failed": counters["failed"], "retries": counters["retries"]}
+
+
+def pending_project_names(repo) -> list[str]:
+    """待提取项目名（subject_matter 为空的去重名；F6 build 阶段输入，SQL 下沉至此）。"""
+    rows = repo.connection().execute(
+        "SELECT DISTINCT project_name FROM bidding_procurement "
+        "WHERE subject_matter IS NULL AND length(btrim(project_name)) > 0 ORDER BY 1"
+    ).fetchall()
+    return [r["project_name"] for r in rows]
