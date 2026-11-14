@@ -23,7 +23,7 @@ class SearchGraphArgs(BaseModel):
         return v
 
 
-class SearchGraphTool(BaseTool):
+class SearchGraphTool(BaseTool[SearchGraphArgs]):
     name = "search_graph"
     description = ("查询项目关系图谱（Neo4j 实体网络）的**实体维度分布**：主要供应商（中标次数/"
                    "中标总额排名）、采购人画像、地区分布、标的物频次。问『主要供应商有哪些公司/"

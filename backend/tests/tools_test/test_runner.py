@@ -16,7 +16,7 @@ class EchoArgs(BaseModel):
     text: str = Field(min_length=1, max_length=100)
 
 
-class EchoTool(BaseTool):
+class EchoTool(BaseTool[EchoArgs]):
     name = "echo"
     description = "回显文本（测试用）"
     args_model = EchoArgs
@@ -25,7 +25,7 @@ class EchoTool(BaseTool):
         return tool_result(text=f"echo: {args.text}")
 
 
-class BoomTool(BaseTool):
+class BoomTool(BaseTool[EchoArgs]):
     name = "boom"
     description = "必炸（测试用）"
     args_model = EchoArgs
@@ -34,7 +34,7 @@ class BoomTool(BaseTool):
         raise RuntimeError("工具内部故障")
 
 
-class SlowTool(BaseTool):
+class SlowTool(BaseTool[EchoArgs]):
     name = "slow"
     description = "慢速（测试用）"
     args_model = EchoArgs
@@ -124,7 +124,7 @@ def test_registry_prompt_table_and_schema_same_source() -> None:
 
 # ── 检索质量标签（参考吸收 #4a）：✅/⚠️ 注入 tool 消息供模型决策补查 ──
 
-class ScoreTool(BaseTool):
+class ScoreTool(BaseTool[EchoArgs]):
     name = "score"
     description = "带相关度来源的假检索（测试用）"
     args_model = EchoArgs

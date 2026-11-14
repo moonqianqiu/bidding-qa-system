@@ -78,8 +78,3 @@ def parse_inline_tool_call(text: str) -> ToolCall | None:
         except json.JSONDecodeError:
             pass
     return None
-
-
-def tool_message_content(payload: dict[str, Any]) -> str:
-    """tool 消息内容统一 JSON 序列化（循环回填用，errors 结构同样进对话）。"""
-    return json.dumps(payload, ensure_ascii=False)

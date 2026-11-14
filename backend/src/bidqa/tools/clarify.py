@@ -14,7 +14,7 @@ class AskClarificationArgs(BaseModel):
                                    description="向用户追问的完整问题")
 
 
-class AskClarificationTool(BaseTool):
+class AskClarificationTool(BaseTool[AskClarificationArgs]):
     name = "ask_clarification"
     description = ("向用户追问澄清。仅当问题缺少地区/时间/标的物全部限定条件且属于数字类"
                    "（多少/排名/金额）时使用；追问必须一次性列出需要用户补充的信息。")

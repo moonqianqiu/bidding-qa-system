@@ -20,15 +20,6 @@ def sse_line(event: dict[str, Any]) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 
 
-def parse_sse_lines(text: str) -> list[dict]:
-    """测试辅助：SSE 文本 → 事件列表。"""
-    events = []
-    for line in text.splitlines():
-        if line.startswith("data:"):
-            events.append(json.loads(line[5:].strip()))
-    return events
-
-
 class SseChannel:
     """工作线程 → StreamingResponse 的事件通道（单连接生命周期）。"""
 

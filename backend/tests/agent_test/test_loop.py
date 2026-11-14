@@ -78,7 +78,7 @@ class SearchArgs(BaseModel):
     query: str = Field(min_length=1)
 
 
-class FakeSearchTool(BaseTool):
+class FakeSearchTool(BaseTool[SearchArgs]):
     name = "search_knowledge"
     description = "知识库检索（fake）"
     args_model = SearchArgs
@@ -88,7 +88,7 @@ class FakeSearchTool(BaseTool):
                            sources=[{"id": "chunk-1", "title": f"{args.query}规定", "score": 0.9}])
 
 
-class SlowTool(BaseTool):
+class SlowTool(BaseTool[SearchArgs]):
     name = "slow_tool"
     description = "慢工具（fake）"
     args_model = SearchArgs

@@ -59,23 +59,7 @@ class LoopResult:
     charts: list[dict] = field(default_factory=list)
     degraded: list[str] = field(default_factory=list)
     phase_times: dict[str, int] = field(default_factory=dict)
-
-
-def _parse_tool_calls(message: dict[str, Any]) -> list[tuple[str, dict, str]]:
-    """LLM assistant 消息中的 tool_calls → [(call_id, name, arguments_dict)]。"""
-    out = []
-    for tc in message.get("tool_calls") or []:
-        fn = tc.get("function", {})
-        raw = fn.get("arguments", "{}")
-        if isinstance(raw, str):
-            try:
-                args = json.loads(raw)
-            except json.JSONDecodeError:
-                args = {"_raw": raw}
-        else:
-            args = raw if isinstance(raw, dict) else {}
-        out.append((str(tc.get("id", "")), str(fn.get("name", "")), args))
-    return out
+    conversation_id: str = ""  # 落库归属（worker 持久化后回填；""=未落库）
 
 
 class AgentLoop:

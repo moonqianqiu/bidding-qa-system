@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -27,18 +27,25 @@ def empty_result(text: str = EMPTY_TEXT) -> dict[str, Any]:
     return {"text": text, "sources": [], "charts": [], "empty": True}
 
 
-class BaseTool(ABC):
-    """取数工具基类：name/description/args_model 三要素 + run。"""
+A = TypeVar("A", bound=BaseModel)
+
+
+class BaseTool(ABC, Generic[A]):
+    """取数工具基类：name/description/args_model 三要素 + run。
+
+    泛型参数 A = 本工具的入参模型（v2.2）：子类 `run(args: XArgs)` 是合法窄化，
+    不再触发类型检查器的 bad-override（签名与 BaseModel 不兼容）。
+    """
 
     name: str
     description: str
-    args_model: type[BaseModel]
+    args_model: type[A]
 
     @abstractmethod
-    def run(self, args: BaseModel) -> dict[str, Any]:
+    def run(self, args: A) -> dict[str, Any]:
         """执行取数；返回 tool_result()/empty_result() 结构。"""
 
-    def validate(self, arguments: dict[str, Any]) -> BaseModel:
+    def validate(self, arguments: dict[str, Any]) -> A:
         """坏参数在此统一暴露（D7：也返回 tool 消息而非抛出）。"""
         return self.args_model.model_validate(arguments)
 
@@ -56,14 +63,14 @@ class ToolRegistry:
     """工具注册表：注册/获取/枚举；schema 与提示词表同源（C2）。"""
 
     def __init__(self) -> None:
-        self._tools: dict[str, BaseTool] = {}
+        self._tools: dict[str, BaseTool[Any]] = {}
 
-    def register(self, tool: BaseTool) -> None:
+    def register(self, tool: BaseTool[Any]) -> None:
         if tool.name in self._tools:
             raise ValueError(f"工具重复注册: {tool.name}")
         self._tools[tool.name] = tool
 
-    def get(self, name: str) -> BaseTool | None:
+    def get(self, name: str) -> BaseTool[Any] | None:
         return self._tools.get(name)
 
     def names(self) -> list[str]:

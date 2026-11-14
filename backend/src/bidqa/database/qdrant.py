@@ -42,10 +42,6 @@ class Chunk:
         self.id = str(uuid.uuid5(uuid.NAMESPACE_URL, key))
 
 
-def chunk_point_id(chunk: Chunk) -> str:
-    return chunk.id
-
-
 def validate_chunk(chunk: Chunk) -> str | None:
     """返回错误描述；None=合法。F4 拒收清单的数据源。"""
     if chunk.source_type not in SOURCE_TYPES:

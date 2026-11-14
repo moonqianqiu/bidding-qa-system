@@ -31,7 +31,7 @@ class SearchDatabaseArgs(BaseModel):
         return v
 
 
-class SearchDatabaseTool(BaseTool):
+class SearchDatabaseTool(BaseTool[SearchDatabaseArgs]):
     name = "search_database"
     description = ("查询招投标业务库（项目明细表）的**数值统计与明细**：各标的物/各地区项目数与金额、"
                    "TopN 排名、按月趋势、关键词明细检索。问『多少个/多少钱/前几名/明细』优先用它。"

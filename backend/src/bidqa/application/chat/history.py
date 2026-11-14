@@ -90,8 +90,9 @@ def compress_after_done(store: Any, conv_id: str, chat: Any, question: str,
             store.upsert_conversation(conv_id, title_of(row2, question),
                                       {"schema_v": 1, "items": items2,
                                        "summary": summary}, "")
-    except Exception:
-        pass
+    except Exception as exc:  # 压缩失败不影响问答，但要在日志留痕（v2.2：不再全静默）
+        logger.warning("会话压缩失败 conv=%s: %s: %s", conv_id,
+                       type(exc).__name__, str(exc)[:120])
 
 
 def defer_compress(store: Any, conv_id: str, chat: Any, question: str,

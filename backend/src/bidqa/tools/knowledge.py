@@ -17,7 +17,7 @@ class SearchKnowledgeArgs(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=20, description="返回条数上限（缺省用检索参数表 final_top_k）")
 
 
-class SearchKnowledgeTool(BaseTool):
+class SearchKnowledgeTool(BaseTool[SearchKnowledgeArgs]):
     name = "search_knowledge"
     description = "检索招投标知识库（法规/流程/FAQ）。返回带 [n] 编号的材料文本与来源条目，供引用标注。"
     args_model = SearchKnowledgeArgs

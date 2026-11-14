@@ -34,7 +34,7 @@ class SearchClient(Protocol):
     def search(self, query: str, depth: str = "basic", max_results: int = 5) -> list[dict]: ...
 
 
-class SearchWebTool(BaseTool):
+class SearchWebTool(BaseTool[SearchWebArgs]):
     name = "search_web"
     args_model = SearchWebArgs
 
