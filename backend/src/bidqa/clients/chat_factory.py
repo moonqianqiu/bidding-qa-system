@@ -68,3 +68,16 @@ def build_vision() -> ChatClient | None:
     if not s.has_vision:
         return None
     return ChatClient(s.VISION_BASE_URL, s.VISION_API_KEY, s.VISION_MODEL)
+
+
+@lru_cache(maxsize=1)
+def build_ocr() -> ChatClient | None:
+    """OCR 槽位客户端（v2.3 双通道）：文档类图片按原件提取文字。
+
+    与视觉槽位同构（同一 OpenAI-compatible 适配器）；独立槽位不回落 VISION_*，
+    未配置=None（analyze 自动路由退化为 Qwen 通用描述，手动「按文档解析」5031）。
+    """
+    s = get_settings()
+    if not s.has_ocr:
+        return None
+    return ChatClient(s.OCR_BASE_URL, s.OCR_API_KEY, s.OCR_MODEL)

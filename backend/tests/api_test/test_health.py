@@ -61,3 +61,14 @@ def test_health_capabilities_chat_matches_configuration(settings_factory, monkey
     from bidqa.config import Settings
     client2 = TestClient(create_app(Settings(_env_file=None)))
     assert client2.get("/api/health").json()["capabilities"]["chat"] is False  # 什么都没配
+
+
+def test_health_capabilities_vision_ocr(settings_factory, monkeypatch):
+    """capabilities.vision_ocr 口径 = has_ocr（OCR_* 三件套齐备，v2.3 双通道）。"""
+    monkeypatch.setattr(health_mod, "_probe_all", lambda s: dict(CANNED))
+    client = TestClient(create_app(settings_factory()))
+    assert client.get("/api/health").json()["capabilities"]["vision_ocr"] is False
+
+    client2 = TestClient(create_app(settings_factory(
+        OCR_BASE_URL="http://ocr.local/v1", OCR_API_KEY="k", OCR_MODEL="ocr-vl")))
+    assert client2.get("/api/health").json()["capabilities"]["vision_ocr"] is True

@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     VISION_BASE_URL: str = ""
     VISION_API_KEY: str = ""
     VISION_MODEL: str = ""
+    OCR_BASE_URL: str = ""  # OCR 槽位（v2.3 双通道；缺失=自动路由退化为 Qwen 通用描述）
+    OCR_API_KEY: str = ""
+    OCR_MODEL: str = ""
     JUDGE_BASE_URL: str = ""  # 配置后评测执行前指纹异源校验（完全相同→5032）
     JUDGE_API_KEY: str = ""
     JUDGE_MODEL: str = ""
@@ -122,6 +125,10 @@ class Settings(BaseSettings):
     @property
     def has_vision(self) -> bool:
         return all([self.VISION_BASE_URL.strip(), self.VISION_API_KEY.strip(), self.VISION_MODEL.strip()])
+
+    @property
+    def has_ocr(self) -> bool:
+        return all([self.OCR_BASE_URL.strip(), self.OCR_API_KEY.strip(), self.OCR_MODEL.strip()])
 
     @property
     def has_judge(self) -> bool:

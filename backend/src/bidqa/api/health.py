@@ -96,6 +96,7 @@ def health(settings: Settings = Depends(get_settings)) -> dict:
         "capabilities": {
             "chat": settings.has_chat, "qdrant": True,  # qdrant 本地绿装恒配置，可达性看 components 探测
             "thinking": settings.has_thinking, "vision": settings.has_vision,
+            "vision_ocr": settings.has_ocr,
             "judge": settings.has_judge, "embedding": settings.has_embedding,
             "rerank": settings.has_rerank, "neo4j": settings.has_neo4j,
             "postgres": settings.has_postgres, "web_search": settings.has_web_search,
