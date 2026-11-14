@@ -147,7 +147,7 @@ class QdrantRepo:
     def query_hybrid(self, question_vector: list[float], question_sparse: models.SparseVector | None,
                      rrf_k: int, prefetch_size: int = 30,
                      limit: int = 15) -> list[models.ScoredPoint]:
-        """双路独立查询 → 客户端 RRF 融合（docs/01 §4.1；融合逻辑见 rag/rrf.py）。
+        """双路独立查询 → 客户端 RRF 融合（docs/01 §4.1；融合逻辑见 database/rrf.py）。
 
         拆成两次 query_points 是为了拿到各路**排名**：Qdrant 的
         `prefetch + FusionQuery` 只返回融合结果（且 FusionQuery 的 k 固定为 2），
@@ -157,7 +157,7 @@ class QdrantRepo:
         lookup_from 不再像 prefetch 那样被服务端下推；当前未传这些参数，
         将来若加过滤须在每一路重复设置。
         """
-        from bidqa.rag.rrf import fuse_rrf
+        from bidqa.database.rrf import fuse_rrf
 
         branches: list[list[models.ScoredPoint]] = []
         if question_vector is not None:

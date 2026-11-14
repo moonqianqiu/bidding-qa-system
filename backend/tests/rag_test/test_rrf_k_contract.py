@@ -74,7 +74,7 @@ def test_classify_k_reaches_query_hybrid():
 
 def test_fuse_rrf_k_changes_ranking():
     """同一批两路结果，k=2 与 k=90 的融合分/排序必须不同。"""
-    from bidqa.rag.rrf import fuse_rrf
+    from bidqa.database.rrf import fuse_rrf
 
     dense = [sp("a", 0.9), sp("b", 0.8), sp("c", 0.7)]
     sparse = [sp("b", 5.0), sp("a", 4.0)]
@@ -86,7 +86,7 @@ def test_fuse_rrf_k_changes_ranking():
 
 def test_fuse_rrf_dedup_and_no_mutation():
     """同一 id 跨路只累加一次贡献；输入 score 不被就地改写。"""
-    from bidqa.rag.rrf import fuse_rrf
+    from bidqa.database.rrf import fuse_rrf
 
     dense = [sp("a", 0.9), sp("b", 0.8)]
     sparse = [sp("a", 5.0)]
@@ -102,7 +102,7 @@ def test_fuse_rrf_dedup_and_no_mutation():
 
 def test_fuse_rrf_uneven_branches():
     """稀疏路远短于稠密路时，只对出现的 rank 累加；空路返回 []。"""
-    from bidqa.rag.rrf import fuse_rrf
+    from bidqa.database.rrf import fuse_rrf
 
     dense = [sp("a", 0.9), sp("b", 0.8), sp("c", 0.7)]
     sparse = [sp("c", 5.0)]

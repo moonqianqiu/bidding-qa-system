@@ -9,9 +9,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from bidqa.api import health
+from bidqa.api.error_handlers import install_error_handlers
 from bidqa.api.middleware import BearerAuthMiddleware
 from bidqa.config import Settings, get_settings
-from bidqa.errors import install_error_handlers
 
 APP_VERSION = "0.1.0"
 

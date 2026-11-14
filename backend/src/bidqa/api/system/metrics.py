@@ -10,9 +10,9 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from bidqa.config import get_settings
+from bidqa.config import Settings, get_settings
 from bidqa.obs.logs import log_buffer, request_stats
 
 router = APIRouter()
@@ -23,13 +23,12 @@ _METRICS_TTL = 5.0
 
 
 @router.get("/api/system/metrics")
-def system_metrics() -> dict[str, Any]:
+def system_metrics(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     global _metrics_cache
     now = time.monotonic()
     if _metrics_cache and now - _metrics_cache[0] < _METRICS_TTL:
         return _metrics_cache[1]
 
-    settings = get_settings()
     resources: dict[str, Any] = {"note": "进程内快照"}
     try:
         proc = __import__("psutil", fromlist=["Process"]).Process()
@@ -52,17 +51,16 @@ def system_metrics() -> dict[str, Any]:
         "requests": request_stats,
         "log_buffer_size": len(log_buffer),
         "resources": resources,
-        "online_eval": _online_stats(),
+        "online_eval": _online_stats(settings),
     }
     _metrics_cache = (now, metrics)
     return metrics
 
 
-def _online_stats() -> dict[str, Any]:
-    """G4 在线评测计数（模块不可用 = 全 0 态，不抛错）。"""
+def _online_stats(settings: Settings) -> dict[str, Any]:
+    """G4 在线评测计数（模块不可用 = 全 0 态，不抛错）。settings 经 DI 注入。"""
     try:
         from bidqa.eval.online import get_online
-        settings = get_settings()
         return {"enabled": bool(settings.ONLINE_EVAL_ENABLED),
                 "sample_rate": settings.ONLINE_EVAL_SAMPLE_RATE,
                 **get_online().stats()}

@@ -1,7 +1,7 @@
 """混合召回 + 精排（docs/02 E1-E5；参数表 docs/01 §4.1 单一来源）。
 
 E1 分类 → E2 嵌入（不可用则 BM25 灾备）→ E3 两路独立召回 + 客户端 RRF 融合
-（k 由 classify 注入，见 rag/rrf.py）→ E4 精排（不可用跳过）
+（k 由 classify 注入，见 database/rrf.py）→ E4 精排（不可用跳过）
 → E5 有界 FIFO 缓存（128 条，按插入顺序淘汰、命中不提升；只缓存成功结果，返回深拷贝）。
 
 score 口径：hits[*].score 只在精排成功时是 0~1 的 relevance；bm25_fallback

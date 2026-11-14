@@ -1,4 +1,5 @@
-"""RRF 融合唯一入口（docs/01 §4.1；E3）。
+"""RRF 融合唯一入口（docs/01 §4.1；E3）。归 database 层：输入/输出全是
+qdrant `ScoredPoint`，与 rag 无依赖（v2.2 修 database→rag 反向边）。
 
 Qdrant 的 `prefetch + FusionQuery` 只返回融合结果、拿不到各路排名，且
 `FusionQuery` 的 k 固定为 2（qdrant_client/hybrid/fusion.py 的

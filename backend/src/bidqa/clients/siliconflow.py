@@ -12,8 +12,6 @@ import time
 import httpx
 from qdrant_client import models
 
-from bidqa.errors import EC_SOURCE_DEGRADED
-
 
 class DataSourceError(RuntimeError):
     """外部数据源不可用（对应 5031）。"""

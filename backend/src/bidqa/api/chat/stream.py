@@ -15,12 +15,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from bidqa.agent.assembly import build_done
 from bidqa.api.chat.guards import check_client_msg_id
 from bidqa.api.chat.schema import ChatStreamRequest
 from bidqa.api.chat.sse import SseChannel
 from bidqa.api.ratelimit import rate_identity
 from bidqa.application.chat.availability import chat_available
+from bidqa.application.chat.done import build_done_event as compose_done_event
 from bidqa.application.chat.online import record_chat_done
 from bidqa.auth.identity import ROLE_GUEST
 from bidqa.config import get_settings
@@ -94,8 +94,8 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
     threading.Thread(target=deliver, daemon=True, name="sse-worker").start()
 
     def build_done_event(outcome: Any, elapsed_ms: int) -> dict:
-        done = build_done(outcome.result, elapsed_ms=elapsed_ms, trace_id=trace_id,
-                          provider=payload.provider or "")
+        done = compose_done_event(outcome.result, elapsed_ms=elapsed_ms,
+                                  trace_id=trace_id, provider=payload.provider or "")
         record_chat_done(settings, question=payload.message,
                          provider=payload.provider, web_enabled=payload.web_enabled,
                          thinking_enabled=payload.thinking_enabled,

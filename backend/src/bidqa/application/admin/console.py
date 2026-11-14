@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from bidqa.auth.factory import build_users_store
-from bidqa.config import get_settings
+from bidqa.config import Settings
 from bidqa.database.factory import build_neo, build_pg, build_repo
 
 _UNAVAILABLE = {"status": "不可用"}  # 硬约束 1：取不到记「不可用」，绝不记 0
@@ -32,11 +32,10 @@ def collect_pg_counts() -> dict[str, Any]:
         return dict(_UNAVAILABLE)
 
 
-def collect_qdrant_counts() -> dict[str, Any]:
+def collect_qdrant_counts(collection: str) -> dict[str, Any]:
     try:
         repo = build_repo()
-        return {"vectors": int(repo.count()),
-                "collection": get_settings().QDRANT_COLLECTION}
+        return {"vectors": int(repo.count()), "collection": collection}
     except Exception:
         return dict(_UNAVAILABLE)
 
@@ -52,7 +51,8 @@ def collect_neo_counts() -> dict[str, Any]:
         return dict(_UNAVAILABLE)
 
 
-def collect_all() -> dict[str, Any]:
-    """三节聚合（pg/qdrant/neo4j）；调用方负责 30s 缓存。"""
-    return {"pg": collect_pg_counts(), "qdrant": collect_qdrant_counts(),
+def collect_all(settings: Settings) -> dict[str, Any]:
+    """三节聚合（pg/qdrant/neo4j）；调用方负责 30s 缓存。settings 经 DI 注入。"""
+    return {"pg": collect_pg_counts(),
+            "qdrant": collect_qdrant_counts(settings.QDRANT_COLLECTION),
             "neo4j": collect_neo_counts()}

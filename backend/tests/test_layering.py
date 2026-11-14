@@ -58,6 +58,8 @@ def _collect_imports(tree: ast.AST, module: str) -> set[str]:
                 short = _short(alias.name)
                 if short:
                     found.add(short)
+                else:  # 三方/标准库：记首段（R9 需要「application import fastapi」可探测）
+                    found.add(alias.name.split(".")[0])
             continue
         if not isinstance(node, ast.ImportFrom):
             continue
@@ -70,6 +72,9 @@ def _collect_imports(tree: ast.AST, module: str) -> set[str]:
                 target = None
         elif node.module:
             target = _short(node.module)
+            if not target:  # 三方/标准库 from-import：同样记首段
+                found.add(node.module.split(".")[0])
+                continue
         if not target:
             continue
         found.add(target)
@@ -112,6 +117,12 @@ ALLOWLIST: dict[str, set[tuple[str, str]]] = {
     "R1-业务层不得依赖api-cli-container-service": set(),
     "R2-obs不得依赖api": set(),
     "R3-api不得依赖cli": set(),
+    # v2.2 新增（2026-11-14 分层审计收口）：全部预期零违规——永久护栏
+    "R7-api不得依赖组合根container": set(),
+    "R8-观测路由不得依赖聊天路由": set(),
+    "R9-application不得依赖web框架": set(),
+    "R10-database不得依赖rag": set(),
+    "R11-api不得依赖agent": set(),
 }
 
 _RULES: list[tuple[str, Callable[[str], bool], Callable[[str], str | None]]] = [
@@ -130,6 +141,16 @@ _RULES: list[tuple[str, Callable[[str], bool], Callable[[str], str | None]]] = [
      _prefix_matcher("api.vision")),
     ("R6-api不得import组合根service",
      lambda m: _in(API_PREFIX, m), lambda t: "service" if t == "service" else None),
+    ("R7-api不得依赖组合根container",
+     lambda m: _in(API_PREFIX, m), _prefix_matcher("container")),
+    ("R8-观测路由不得依赖聊天路由",
+     lambda m: _in("api.system", m), _prefix_matcher("api.chat")),
+    ("R9-application不得依赖web框架",
+     lambda m: _in("application", m), lambda t: "fastapi" if t == "fastapi" else None),
+    ("R10-database不得依赖rag",
+     lambda m: _in("database", m), _prefix_matcher("rag")),
+    ("R11-api不得依赖agent",
+     lambda m: _in(API_PREFIX, m), _prefix_matcher("agent")),
 ]
 
 
@@ -177,6 +198,14 @@ def test_detector_catches() -> None:
     assert _detect("from bidqa.container import build_x", "tools.base", biz_rule)
     assert _detect("from bidqa.api.metrics import x", "obs.logs", "R2-obs不得依赖api")
     assert _detect("from bidqa.cli import main", "api.auth", "R3-api不得依赖cli")
+    # v2.2 新增规则的「能红」自检
+    assert _detect("from bidqa.container import build_x", "api.ask", "R7-api不得依赖组合根container")
+    assert _detect("from bidqa.api.chat.sse import SseChannel", "api.system.metrics",
+                   "R8-观测路由不得依赖聊天路由")
+    assert _detect("import fastapi", "application.chat.worker", "R9-application不得依赖web框架")
+    assert _detect("from bidqa.rag.rrf import fuse_rrf", "database.qdrant", "R10-database不得依赖rag")
+    assert _detect("from bidqa.agent.assembly import build_done", "api.chat.stream",
+                   "R11-api不得依赖agent")
     assert _detect("from bidqa.api.system import note_request",
                    "api.chat_stream", "R4-业务路由不得import观测路由")
     assert not _detect("from bidqa.api.system import router",
