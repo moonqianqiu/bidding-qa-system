@@ -18,13 +18,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from bidqa.api.chat.guards import check_client_msg_id
 from bidqa.api.chat.schema import ChatStreamRequest
 from bidqa.api.chat.sse import SseChannel
+from bidqa.api.deps import degraded_503, rate_limited_429
 from bidqa.api.ratelimit import rate_identity
 from bidqa.application.chat.availability import chat_available
 from bidqa.application.chat.done import build_done_event as compose_done_event
 from bidqa.application.chat.online import record_chat_done
 from bidqa.auth.identity import ROLE_GUEST
 from bidqa.config import get_settings
-from bidqa.errors import EC_RATE_LIMITED, EC_SOURCE_DEGRADED, error_body
+from bidqa.errors import EC_SOURCE_DEGRADED, error_body
 
 router = APIRouter()
 
@@ -39,12 +40,7 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
     limiter, bucket = rate_identity(request, settings)
     allowed, retry_after = limiter.check(bucket)
     if not allowed:
-        return JSONResponse(
-            status_code=429,
-            content=error_body(EC_RATE_LIMITED, "请求过于频繁，请稍后再试",
-                               detail={"retry_after": retry_after}),
-            headers={"Retry-After": str(retry_after)},
-        )
+        return rate_limited_429(retry_after)
     # 4091 幂等（client_msg_id 60s 去重窗口；重试必须换新键）
     if (conflict := check_client_msg_id(payload.client_msg_id)) is not None:
         return JSONResponse(status_code=409,
@@ -54,11 +50,7 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
     # 前置可用性检查：该 provider 实际会用的聊天客户端缺失 → HTTP 5031
     # （口径与 worker 主路径一致：缺省/未知 provider 回主槽位；只配命名档不再误 5031）
     if not chat_available(payload.provider):
-        return JSONResponse(
-            status_code=503,
-            content=error_body(EC_SOURCE_DEGRADED, "数据源降级/不可用",
-                               detail={"source": "chat: 核心槽位未配置"}),
-        )
+        return degraded_503("chat: 核心槽位未配置")
 
     identity = getattr(request.state, "identity", None)
     from bidqa.application.chat.worker import ChatJob, ChatJobError, run_chat_job

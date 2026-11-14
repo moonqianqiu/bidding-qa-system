@@ -14,11 +14,11 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from bidqa.api.deps import degraded_503, rate_limited_429
 from bidqa.api.ratelimit import rate_identity
 from bidqa.application.vision import VisionUnavailable, describe_image, get_ref_store
 from bidqa.config import get_settings
-from bidqa.errors import (
-    EC_PAYLOAD_TOO_LARGE, EC_RATE_LIMITED, EC_SOURCE_DEGRADED, error_body)
+from bidqa.errors import EC_PAYLOAD_TOO_LARGE, error_body
 
 router = APIRouter()
 
@@ -52,12 +52,7 @@ def vision(payload: VisionRequest, request: Request,
     limiter, bucket = rate_identity(request, settings)  # 游客已被中间件 403 拦在前面
     allowed, retry_after = limiter.check(bucket)
     if not allowed:
-        return JSONResponse(
-            status_code=429,
-            content=error_body(EC_RATE_LIMITED, "请求过于频繁，请稍后再试",
-                               detail={"retry_after": retry_after}),
-            headers={"Retry-After": str(retry_after)},
-        )
+        return rate_limited_429(retry_after)
     if len(payload.image) > MAX_B64_CHARS:  # 先挡体积再谈能力（传输层错误优先）
         return JSONResponse(
             status_code=413,
@@ -75,10 +70,6 @@ def vision(payload: VisionRequest, request: Request,
     try:
         description = describe_image(data_url)
     except VisionUnavailable as exc:
-        return JSONResponse(
-            status_code=503,
-            content=error_body(EC_SOURCE_DEGRADED, "数据源降级/不可用",
-                               detail={"source": str(exc)}),
-        )
+        return degraded_503(str(exc))
     ref = get_ref_store().put(description)
     return {"image_ref": ref, "description": description, "filename": payload.filename}

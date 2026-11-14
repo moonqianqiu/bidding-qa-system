@@ -9,13 +9,12 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from bidqa.api.deps import degraded_503, rate_limited_429
 from bidqa.api.ratelimit import rate_identity
 from bidqa.application.ask import AskUnavailable, ask_direct
 from bidqa.config import get_settings
-from bidqa.errors import EC_RATE_LIMITED, EC_SOURCE_DEGRADED, error_body
 from bidqa.rag.retrieve import FINAL_TOP_K
 
 router = APIRouter()
@@ -35,21 +34,9 @@ def ask(payload: AskRequest, request: Request,
     limiter, bucket = rate_identity(request, settings)  # B4；游客走独立更严配额桶
     allowed, retry_after = limiter.check(bucket)
     if not allowed:  # B4：问答类端点限流；被限流不计在线评测
-        return JSONResponse(
-            status_code=429,
-            content=error_body(
-                EC_RATE_LIMITED,
-                "请求过于频繁，请稍后再试",
-                detail={"retry_after": retry_after},
-            ),
-            headers={"Retry-After": str(retry_after)},
-        )
+        return rate_limited_429(retry_after)
     note_request("/api/ask", 200)  # H2 行为计数
     try:
         return ask_direct(payload.question, payload.top_k)
     except AskUnavailable as exc:
-        return JSONResponse(
-            status_code=503,
-            content=error_body(EC_SOURCE_DEGRADED, "数据源降级/不可用",
-                               detail={"source": str(exc)}),
-        )
+        return degraded_503(str(exc))

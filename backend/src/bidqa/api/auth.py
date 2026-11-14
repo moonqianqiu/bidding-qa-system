@@ -16,7 +16,8 @@ from pydantic import BaseModel, Field
 from bidqa.auth.factory import build_users_store
 from bidqa.auth.identity import MACHINE_USERNAME, ROLE_ADMIN, Identity
 from bidqa.config import get_settings
-from bidqa.errors import EC_FORBIDDEN, EC_SOURCE_DEGRADED, EC_UNAUTHORIZED, error_body
+from bidqa.api.deps import degraded_503
+from bidqa.errors import EC_FORBIDDEN, EC_UNAUTHORIZED, error_body
 
 router = APIRouter()
 
@@ -34,11 +35,7 @@ def _store_or_503() -> Any:
 
 
 def _503() -> JSONResponse:
-    return JSONResponse(
-        status_code=503,
-        content=error_body(EC_SOURCE_DEGRADED, "数据源降级/不可用",
-                           detail={"source": "postgres: 用户体系不可用"}),
-    )
+    return degraded_503("postgres: 用户体系不可用")
 
 
 @router.post("/api/auth/login")

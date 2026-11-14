@@ -19,7 +19,8 @@ from bidqa.auth.identity import ROLE_ADMIN
 from bidqa.config import get_settings
 from bidqa.database.conversations import is_uuid
 from bidqa.database.factory import build_conversation_store, build_feedback_store
-from bidqa.errors import EC_NOT_FOUND, EC_SOURCE_DEGRADED, error_body
+from bidqa.api.deps import degraded_503
+from bidqa.errors import EC_NOT_FOUND, error_body
 
 router = APIRouter()
 
@@ -29,11 +30,7 @@ def _store_or_5031() -> Any:
 
 
 def _5031() -> JSONResponse:
-    return JSONResponse(
-        status_code=503,
-        content=error_body(EC_SOURCE_DEGRADED, "数据源降级/不可用",
-                           detail={"source": "postgres: 未配置或不可用"}),
-    )
+    return degraded_503("postgres: 未配置或不可用")
 
 
 def _scope(request: Request) -> tuple[str | None, bool]:

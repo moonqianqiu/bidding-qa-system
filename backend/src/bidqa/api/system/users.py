@@ -14,7 +14,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from bidqa.auth.factory import build_users_store
-from bidqa.errors import (EC_CONFLICT, EC_NOT_FOUND, EC_SOURCE_DEGRADED,
+from bidqa.api.deps import degraded_503
+from bidqa.errors import (EC_CONFLICT, EC_NOT_FOUND,
                           EC_VALIDATION, error_body)
 
 router = APIRouter()
@@ -39,11 +40,7 @@ def _store_or_503() -> Any:
 
 
 def _503_store() -> JSONResponse:
-    return JSONResponse(
-        status_code=503,
-        content=error_body(EC_SOURCE_DEGRADED, "数据源降级/不可用",
-                           detail={"source": "postgres: 用户体系不可用"}),
-    )
+    return degraded_503("postgres: 用户体系不可用")
 
 
 @router.get("/api/system/users")
