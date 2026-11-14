@@ -9,18 +9,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/types";
 import { makeSeqGuard, streamChat } from "@/lib/sse";
 import type { AuthUser } from "@/lib/auth";
-import { compressImage } from "@/lib/image";
-import { postVision } from "@/lib/api";
 import type { useChatSessions } from "@/features/chat/useChatSessions";
 
 type Sessions = ReturnType<typeof useChatSessions>;
-
-export interface Attachment {
-  name: string;
-  description: string;
-  ref: string;
-  error?: boolean;
-}
 
 export function useChatStream(
   authUser: AuthUser | null,
@@ -32,8 +23,7 @@ export function useChatStream(
 ) {
   const { active, updateConvo, patchLastAssistant, refreshList } = sessions;
   const [streaming, setStreaming] = useState(false);
-  const [attachment, setAttachment] = useState<Attachment | null>(null);
-  const [uploadingImage, setUploadingImage] = useState(false);
+  // 图片附件状态在 useImageAttachment（v2.3 双通道）：本 hook 只消费解析产出的 image_refs
 
   const abortRef = useRef<AbortController | null>(null);
   const requestSeqRef = useRef(0); // A8 请求序号：旧流事件不得覆盖新会话
@@ -83,30 +73,9 @@ export function useChatStream(
     }
   }, []);
 
-  // A3 图片上传：压缩 → /api/vision 换引用（游客禁传：入口已隐藏，此处双保险）
-  const pickFile = useCallback(
-    async (file: File) => {
-      if (uploadingImage) return;
-      setUploadingImage(true);
-      setAttachment(null);
-      try {
-        const image = await compressImage(file); // 长边≤1024 / JPEG 0.85 / 白底（A3）
-        const r = await postVision(image, file.name);
-        setAttachment({ name: file.name, description: r.description, ref: r.image_ref });
-      } catch {
-        setAttachment({ name: file.name, description: "", ref: "", error: true }); // 5031/413/网络，统一错误 chip
-      } finally {
-        setUploadingImage(false);
-      }
-    },
-    [uploadingImage],
-  );
-
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, imageRefs?: string[]) => {
       if (!active || streaming) return;
-      const imageRefs = attachment?.ref ? [attachment.ref] : undefined;
-      setAttachment(null); // 附件随本轮消耗（描述 TTL 10min，不跨轮复用）
       const convoId = active.id;
       const requestSeq = ++requestSeqRef.current;
       const userMsg: ChatMessage = {
@@ -198,7 +167,7 @@ export function useChatStream(
         }
       });
     },
-    [active, streaming, webEnabled, thinkingEnabled, provider, lang, attachment,
+    [active, streaming, webEnabled, thinkingEnabled, provider, lang,
      updateConvo, patchLastAssistant, flushPending, startFlusher, stopFlusher, refreshList],
   );
 
@@ -206,5 +175,5 @@ export function useChatStream(
     abortRef.current?.abort(); // 中断保留已流内容（A8）
   }, []);
 
-  return { streaming, attachment, setAttachment, uploadingImage, pickFile, send, stop };
+  return { streaming, send, stop };
 }

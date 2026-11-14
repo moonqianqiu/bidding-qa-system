@@ -125,17 +125,25 @@ export const postFeedback = (body: FeedbackBody) =>
   });
 
 // 图片解析 → image_ref（docs/01 §3.1：聊天只传引用不传 base64）
+// v2.3 双通道：original=高分辨率原件（OCR 用），mode=auto(Qwen 路由)/ocr(手动按文档)/describe
 export type VisionResult = {
   image_ref: string;
   description: string;
   filename: string | null;
+  mode_used?: "describe" | "ocr";
+  route_by?: "auto" | "manual" | "unavailable";
+  degraded?: boolean;
 };
 
-export const postVision = (image: string, filename: string) =>
+export const postVision = (
+  image: string,
+  filename: string,
+  opts?: { original?: string; mode?: "auto" | "ocr" | "describe" },
+) =>
   jfetch<VisionResult>("/api/vision", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image, filename }),
+    body: JSON.stringify({ image, filename, ...opts }),
   });
 
 // ── 控制台（A15/B11/B12；全部 admin-only，403 → /console 页内提示态）──

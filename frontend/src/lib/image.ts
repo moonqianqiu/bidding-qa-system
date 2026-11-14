@@ -1,6 +1,11 @@
-// A3 图片压缩（参考项目同款口径）：长边 ≤1024、JPEG 0.85、透明 PNG 先铺白底防黑底。
+// A3 图片压缩（参考项目同款口径）：透明 PNG 先铺白底防黑底。
+// v2.3 双通道参数化：预览 1024/0.85（Qwen 路由）、原件 2000/0.92（OCR 看清小字）。
 
-export async function compressImage(file: File): Promise<string> {
+export async function compressImage(
+  file: File,
+  maxEdge = 1024,
+  quality = 0.85,
+): Promise<string> {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -9,7 +14,7 @@ export async function compressImage(file: File): Promise<string> {
       el.onerror = () => reject(new Error("image load failed"));
       el.src = url;
     });
-    const scale = Math.min(1, 1024 / Math.max(img.width, img.height));
+    const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
     const w = Math.max(1, Math.round(img.width * scale));
     const h = Math.max(1, Math.round(img.height * scale));
     const canvas = document.createElement("canvas");
@@ -20,7 +25,7 @@ export async function compressImage(file: File): Promise<string> {
     ctx.fillStyle = "#ffffff"; // 透明 PNG → 白底（防 JPEG 黑底）
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(img, 0, 0, w, h);
-    return canvas.toDataURL("image/jpeg", 0.85);
+    return canvas.toDataURL("image/jpeg", quality);
   } finally {
     URL.revokeObjectURL(url);
   }

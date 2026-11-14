@@ -30,6 +30,8 @@ const zh = {
   analyzing: "图片解析中…",
   remove: "移除",
   visionError: "图片解析失败（检查 VISION 槽位配置）",
+  parseAsDoc: "按文档解析",
+  parseAsDocHint: "开启后图片按高分辨率原件 OCR 提取原文（适合文档/表格）；关闭时由模型自动判断",
   settings: "设置",
   settingsTitle: "设置",
   appearance: "外观",
@@ -184,6 +186,9 @@ const en: Dict = {
   analyzing: "Analyzing image…",
   remove: "Remove",
   visionError: "Image analysis failed (check VISION config)",
+  parseAsDoc: "Parse as document",
+  parseAsDocHint:
+    "Extract text from the full-resolution image via OCR (documents/tables); off = model decides",
   settings: "Settings",
   settingsTitle: "Settings",
   appearance: "Appearance",

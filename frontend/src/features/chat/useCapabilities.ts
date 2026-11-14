@@ -9,6 +9,7 @@ import { getHealth, getProviders, type Providers } from "@/lib/api";
 export function useCapabilities(isGuest: boolean) {
   const [healthOk, setHealthOk] = useState<boolean | null>(null);
   const [visionReady, setVisionReady] = useState(false); // A3：vision 就绪才显示上传按钮
+  const [visionOcrReady, setVisionOcrReady] = useState(false); // v2.3：OCR 槽位就绪才显示按文档解析开关
   const [webReady, setWebReady] = useState(false); // D4/D5：联网供应商已配置才显示联网开关
   const [providers, setProviders] = useState<Providers | null>(null);
   const [provider, setProviderState] = useState(""); // "" = 默认槽位（A12）
@@ -18,6 +19,7 @@ export function useCapabilities(isGuest: boolean) {
       .then((h) => {
         setHealthOk(h.status === "ok");
         setVisionReady(h.capabilities?.vision === true);
+        setVisionOcrReady(h.capabilities?.vision_ocr === true); // v2.3 双通道
         setWebReady(h.capabilities?.web_search === true); // 留空不开启=按钮不出现
       })
       .catch(() => setHealthOk(false));
@@ -38,5 +40,5 @@ export function useCapabilities(isGuest: boolean) {
     }
   }, []);
 
-  return { healthOk, visionReady, webReady, providers, provider, setProvider };
+  return { healthOk, visionReady, visionOcrReady, webReady, providers, provider, setProvider };
 }

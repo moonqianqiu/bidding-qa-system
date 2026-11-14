@@ -77,3 +77,11 @@ export type Conversation = {
   updatedAt: number;
   messages: ChatMessage[];
 };
+
+// 图片附件（v2.3 双通道：选图只建档，发送时才经 /api/vision 换 ref；
+// error=解析失败，chip 留错态、发送继续但不带图）
+export type Attachment = {
+  name: string;
+  ref?: string;
+  error?: boolean;
+};

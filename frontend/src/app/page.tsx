@@ -17,6 +17,7 @@ import { useTheme } from "@/features/chat/useTheme";
 import { useCapabilities } from "@/features/chat/useCapabilities";
 import { useChatSessions } from "@/features/chat/useChatSessions";
 import { useChatStream } from "@/features/chat/useChatStream";
+import { useImageAttachment, type DocMode } from "@/features/chat/useImageAttachment";
 import { exportChatMarkdown } from "@/features/chat/exportMarkdown";
 import Sidebar from "@/features/chat/Sidebar";
 import ChatPanel from "@/features/chat/ChatPanel";
@@ -40,6 +41,7 @@ export default function Home() {
   // 开关状态 hoist 本层（Composer 开关与 stream payload 共享；值直传 hook，无过期闭包）
   const [webEnabled, setWebEnabled] = useState(false);
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  const [docMode, setDocMode] = useState<DocMode>("auto"); // v2.3：关=Qwen 自动路由，开=按文档解析
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Conversation | null>(null);
   const [confirmBatch, setConfirmBatch] = useState(false);
@@ -49,7 +51,14 @@ export default function Home() {
   const sessions = useChatSessions(authUser);
   const stream = useChatStream(authUser, sessions, webEnabled, thinkingEnabled,
                                caps.provider, lang === "en" ? "en" : "zh");
+  const images = useImageAttachment();
   const { active } = sessions;
+
+  // v2.3 双通道：发送前先解析图片换 image_ref（失败=不带图继续，chip 留错态）
+  const handleSend = async (text: string) => {
+    const ref = await images.prepareForSend(docMode);
+    await stream.send(text, ref ? [ref] : undefined);
+  };
 
   const handleLogout = useCallback(async () => {
     try {
@@ -142,13 +151,16 @@ export default function Home() {
           webReady={caps.webReady}
           thinkingEnabled={thinkingEnabled}
           visionReady={caps.visionReady && !isGuest} // 游客禁传图（服务端 vision 403 双保险）
-          attachment={stream.attachment}
-          uploadingImage={stream.uploadingImage}
+          visionOcrReady={caps.visionOcrReady && !isGuest}
+          attachment={images.attachment}
+          preparing={images.preparing}
+          docMode={docMode}
           onToggleWeb={() => setWebEnabled((v) => !v)}
           onToggleThinking={() => setThinkingEnabled((v) => !v)}
-          onPickFile={stream.pickFile}
-          onRemoveAttachment={() => stream.setAttachment(null)}
-          onSend={stream.send}
+          onToggleDocMode={() => setDocMode((m) => (m === "ocr" ? "auto" : "ocr"))}
+          onPickFile={images.pickFile}
+          onRemoveAttachment={images.remove}
+          onSend={handleSend}
           onStop={stream.stop}
         />
       </main>
