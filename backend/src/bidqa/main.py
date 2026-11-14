@@ -48,7 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from bidqa.api.chat_stream import router as chat_stream_router
     from bidqa.api.conversations import router as conversations_router
     from bidqa.api.eval_runs import router as eval_router
-    from bidqa.api.system import router as system_router
+    from bidqa.api.system.router import router as system_router
     from bidqa.api.vision import router as vision_router
 
     app.include_router(auth_router)
@@ -58,7 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(system_router)
     app.include_router(eval_router)
     app.include_router(vision_router)
-    from bidqa.api.system import setup_log_buffer
+    from bidqa.obs.logs import setup_log_buffer
 
     # 日志缓冲随服务常开（H2）；评测门只影响 /api/eval 可见性
     setup_log_buffer()

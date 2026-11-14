@@ -104,7 +104,7 @@ def vision(payload: VisionRequest, request: Request,
            settings: Any = Depends(get_settings)) -> Any:
     # settings 经 DI 注入（main.py 工厂 override 可测试）——此前直调 get_settings()
     # 绕过注入，测试要靠真实 .env 碰巧配置了 VISION 才能过（2026-11-14 新仓复现修复）
-    from bidqa.api.system import note_request
+    from bidqa.obs.logs import note_request
     note_request("/api/vision", 200)  # H2 行为计数
     limiter, bucket = rate_identity(request, settings)  # 游客已被中间件 403 拦在前面
     allowed, retry_after = limiter.check(bucket)

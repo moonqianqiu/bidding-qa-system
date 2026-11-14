@@ -40,13 +40,9 @@ def build_reranker() -> RerankClient | None:
     return RerankClient(s.RERANK_BASE_URL, s.RERANK_API_KEY, s.RERANK_MODEL)
 
 
-@lru_cache(maxsize=1)
-def build_chat() -> ChatClient | None:
-    s = get_settings()
-    if not (s.CHAT_BASE_URL and s.CHAT_API_KEY and s.CHAT_MODEL):
-        return None
-    return ChatClient(s.CHAT_BASE_URL, s.CHAT_API_KEY, s.CHAT_MODEL,
-                      max_tokens=s.CHAT_MAX_TOKENS)
+# 主槽位客户端工厂已归 clients/chat_factory（重构 C1 pilot）——此处兼容再导出，
+# ask/health/cli 等旧导入方暂不受影响；C3 随 application/chat 落地后移除本行。
+from bidqa.clients.chat_factory import build_chat, build_chat_for  # noqa: F401
 
 
 @lru_cache(maxsize=1)
@@ -119,19 +115,3 @@ def build_users_store() -> "UsersStore | None":
                 s.ADMIN_USERNAME)
     return store
 
-
-_profile_chats: dict[str, ChatClient] = {}
-
-
-def build_chat_for(provider: str | None) -> ChatClient | None:
-    """C8/A12：按 provider 名走命名档；未指定/未配置回落主槽位。"""
-    if not provider:
-        return build_chat()
-    profile = get_settings().chat_profiles().get(provider)
-    if profile is None:
-        return build_chat()
-    client = _profile_chats.get(provider)
-    if client is None:
-        client = ChatClient(profile["base_url"], profile["api_key"], profile["model"])
-        _profile_chats[provider] = client
-    return client

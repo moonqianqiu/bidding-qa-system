@@ -1,82 +1,36 @@
-"""H2 系统监控端点（docs/02）：资源快照（5s 缓存）+ 内存日志环形缓冲。
+"""H2 系统监控与管理端点（docs/02）：metrics/logs + console 聚合 + 用户管理 +
+游客开关 + 全库会话管理（A15/B11/B12）+ providers 名册聚合出口。
 
-脱敏先具体后通用：API key 形态先掩码；取不到的资源项记「不可用」绝不记 0。
-单进程约定（docs/01 §6）——计数与日志缓冲均为进程内。
-A15/B11/B12（docs/02）：/api/system/console 三库规模聚合 + 用户管理 + 游客开关 +
-全库会话管理（admin-only，中间件前缀门禁；全库端点是聊天页可见域的独立旁路，
-不改动 conversations.py 的三元组）。
+观测状态（请求计数/日志环/脱敏）已归 obs/logs（重构 C1 pilot）——本模块只做
+端点与缓存，不再承载观测状态，也不再被业务路由反向依赖（test_layering R4）。
+单进程约定（docs/01 §6）——各缓存均为进程内。admin-only 门禁由中间件按
+/api/system 前缀统一执行；全库会话端点是聊天页可见域的独立旁路，不改动
+conversations.py 的三元组。C4 将按 console/users/conv_admin 继续拆分本文件。
 """
 
 from __future__ import annotations
 
-import logging
-import re
 import time
-from collections import deque
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from bidqa.auth.identity import ROLE_ADMIN
+from bidqa.api.system.providers import router as _providers_router
 from bidqa.config import get_settings
 from bidqa.database.postgres import is_uuid
 from bidqa.errors import (EC_CONFLICT, EC_NOT_FOUND, EC_SOURCE_DEGRADED,
                           EC_VALIDATION, error_body)
+from bidqa.obs.logs import log_buffer, request_stats
 from bidqa.service import build_neo, build_pg, build_repo, build_users_store
 
 router = APIRouter()
+router.include_router(_providers_router)  # providers：纯配置只读视图（独立模块见同目录）
 
 _started_at = time.monotonic()
-_request_stats: dict[str, dict[str, int]] = {}
-_log_buffer: deque[dict[str, str]] = deque(maxlen=500)
 _metrics_cache: tuple[float, dict] | None = None
 _METRICS_TTL = 5.0
-
-_KEY_RE = re.compile(r"(sk-[A-Za-z0-9]{4})[A-Za-z0-9-]+([A-Za-z0-9]{4})")
-
-
-def mask_secrets(text: str) -> str:
-    """脱敏先具体后通用（docs/02 H 域）：先 API key 形态，其余规则按需追加。"""
-    return _KEY_RE.sub(r"\1****\2", text)
-
-
-class MemoryLogHandler(logging.Handler):
-    """内存环形日志缓冲（单进程）；写入前脱敏。"""
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            message = mask_secrets(self.format(record))
-        except Exception:
-            return
-        _log_buffer.append({"ts": time.strftime("%H:%M:%S"),
-                            "level": record.levelname,
-                            "name": record.name, "message": message[:500]})
-
-
-def setup_log_buffer(level: int = logging.INFO) -> None:
-    handler = MemoryLogHandler()
-    handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
-    root = logging.getLogger()
-    root.addHandler(handler)
-    root.setLevel(level)
-    # 应用级日志同步落 stderr（start.sh 2>&1 → backend.log）。此前根 logger 只有内存环，
-    # 「上游流式响应为空」等 warning 在 backend.log 里永远看不到（2026-11-08 实证修复）。
-    # uvicorn 自有 handler 不传播到 root，不会重复输出。幂等：重复 setup 不叠 handler。
-    bidqa = logging.getLogger("bidqa")
-    if not any(isinstance(h, logging.StreamHandler) for h in bidqa.handlers):
-        stream = logging.StreamHandler()  # 默认 stderr
-        stream.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-        bidqa.addHandler(stream)
-    bidqa.setLevel(level)
-
-
-def note_request(path: str, status_code: int) -> None:
-    entry = _request_stats.setdefault(path, {"count": 0, "errors": 0})
-    entry["count"] += 1
-    if status_code >= 500:
-        entry["errors"] += 1
 
 
 @router.get("/api/system/metrics")
@@ -108,8 +62,8 @@ def system_metrics() -> dict[str, Any]:
 
     metrics = {
         "uptime_s": int(now - _started_at),
-        "requests": _request_stats,
-        "log_buffer_size": len(_log_buffer),
+        "requests": request_stats,
+        "log_buffer_size": len(log_buffer),
         "resources": resources,
         "online_eval": _online_stats(),
     }
@@ -129,25 +83,15 @@ def _online_stats() -> dict[str, Any]:
         return {"enabled": False, "sample_rate": 0.0}
 
 
-@router.get("/api/system/providers")
-def system_providers() -> dict[str, Any]:
-    """A12/C8 档位列表（前端下拉用；只给名字与模型，绝不回传 key）。"""
-    settings = get_settings()
-    profiles = [{"name": name, "model": p.get("model", "")}
-                for name, p in settings.chat_profiles().items()
-                if p.get("base_url") and p.get("api_key") and p.get("model")]
-    return {"default_model": settings.CHAT_MODEL, "profiles": profiles}
-
-
 @router.get("/api/system/logs")
 def system_logs(level: str = Query(default="INFO"),
                 q: str = Query(default="", max_length=100)) -> Any:
     order = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
     min_level = order.get(level.upper(), 20)
-    logs = [entry for entry in _log_buffer
+    logs = [entry for entry in log_buffer
             if order.get(entry["level"], 20) >= min_level
             and (not q or q.lower() in entry["message"].lower())]
-    return {"logs": list(logs)[-200:], "total": len(logs), "buffered": len(_log_buffer)}
+    return {"logs": list(logs)[-200:], "total": len(logs), "buffered": len(log_buffer)}
 
 
 # ══ A15/B11 控制台聚合（admin-only；KPI 三库规模一端点取齐，30s 缓存 health 同款）══
@@ -257,7 +201,7 @@ class GuestEnabledRequest(BaseModel):
 
 @router.get("/api/system/users")
 def system_users() -> Any:
-    """用户列表（含每人活跃会话数，auth_core.list_users 的 LEFT JOIN）。"""
+    """用户列表（含每人活跃会话数，store.list_users 的 LEFT JOIN）。"""
     store = _store_or_503()
     if store is None:
         return _503_store()

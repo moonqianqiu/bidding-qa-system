@@ -27,13 +27,14 @@ from bidqa.agent.assembly import build_done
 from bidqa.agent.loop import AgentLoop, LoopResult
 from bidqa.api.ratelimit import rate_identity
 from bidqa.auth.identity import ROLE_GUEST
+from bidqa.clients.chat_factory import build_chat_for
 from bidqa.clients.llm import ChatClient
 from bidqa.clients.siliconflow import DataSourceError
 from bidqa.config import get_settings
 from bidqa.errors import EC_CONFLICT, EC_RATE_LIMITED, EC_SOURCE_DEGRADED, error_body
 from bidqa.rag.retrieve import RetrievalResult
 from bidqa.service import (
-    build_chat, build_chat_for, build_neo, build_pg, build_reranker, build_retriever,
+    build_chat, build_neo, build_pg, build_reranker, build_retriever,
     build_web_clients,
 )
 from bidqa.clients.tavily import web_cache
@@ -327,7 +328,7 @@ def _direct_rag(payload: ChatStreamRequest, emit: Any, reason: str) -> LoopResul
 def chat_stream(payload: ChatStreamRequest, request: Request,
                 settings: Any = Depends(get_settings)) -> Any:
     """SSE 主端点。settings 经 DI 注入（应用工厂 override 可测试）。"""
-    from bidqa.api.system import note_request
+    from bidqa.obs.logs import note_request
     note_request("/api/chat/stream", 200)  # H2 行为计数（限流/4091 提前返回不计入）
     # 429 限流（B4；被限流请求不进入任何评测埋点；游客走独立更严配额桶）
     limiter, bucket = rate_identity(request, settings)

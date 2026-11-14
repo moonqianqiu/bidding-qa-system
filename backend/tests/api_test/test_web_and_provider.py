@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import time
 
+from bidqa.clients.chat_factory import _profile_chats, build_chat_for
 from bidqa.clients.tavily import WebCache
 from bidqa.config import Settings
-from bidqa.service import _profile_chats, build_chat_for
 from bidqa.tools.web import SearchWebTool
 
 CORE = {
@@ -228,7 +228,7 @@ def test_chat_profiles_empty(monkeypatch) -> None:
 def test_build_chat_for_routing(monkeypatch) -> None:
     """指定已配置 provider → 走命名档；未指定/未知 → 主槽位。"""
     s = make_profile_settings(monkeypatch, "fast")
-    monkeypatch.setattr("bidqa.service.get_settings", lambda: s)
+    monkeypatch.setattr("bidqa.clients.chat_factory.get_settings", lambda: s)
     _profile_chats.clear()
 
     fast = build_chat_for("fast")

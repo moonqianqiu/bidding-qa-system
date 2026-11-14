@@ -71,7 +71,7 @@ def ask(payload: AskRequest, request: Request) -> dict[str, Any]:
         )
     retriever: Retriever = build_retriever()
     chat: ChatClient | None = build_chat()
-    from bidqa.api.system import note_request
+    from bidqa.obs.logs import note_request
 
     note_request("/api/ask", 200)  # H2 行为计数
 

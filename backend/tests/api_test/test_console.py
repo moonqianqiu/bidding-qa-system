@@ -12,7 +12,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-import bidqa.api.system as sys_mod
+import bidqa.api.system.router as sys_mod  # 端点与 builder 命名空间（providers 独立模块不经此）
 from bidqa.auth.identity import Identity
 from bidqa.main import create_app
 

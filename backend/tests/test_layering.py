@@ -111,18 +111,14 @@ ALLOWLIST: dict[str, set[tuple[str, str]]] = {
         ("api.middleware", "service"),     # C4: auth/factory
         ("api.conversations", "service"),  # C4: database/factory（会话存储）
         ("api.health", "service"),         # C4: database/rag factory
-        ("api.system", "service"),         # C4: application/admin
+        ("api.system.router", "service"),  # C4: application/admin
     },
     # 过渡：图片 ref store 归 application/vision（C3 迁移后清零）
     "R5-chat不得依赖api.vision": {
         ("api.chat_stream", "api.vision"),  # C3: image_ref 读取改 application 接口
     },
-    # 业务路由 import 观测路由（note_request）：owner=C1 pilot 本切片迁 obs 后清零
-    "R4-业务路由不得import观测路由": {
-        ("api.ask", "api.system"),
-        ("api.vision", "api.system"),
-        ("api.chat_stream", "api.system"),
-    },
+    # 业务路由 import 观测路由（note_request）：C1 pilot 已收口至 obs——空集存档
+    "R4-业务路由不得import观测路由": set(),
     # 业务层反向依赖 HTTP/CLI/组合根：现状为零违规——永久护栏
     "R1-业务层不得依赖api-cli-container-service": set(),
     "R2-obs不得依赖api": set(),
