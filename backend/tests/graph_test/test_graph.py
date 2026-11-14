@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from bidqa.ingest.graph_build import (
     MERGE_CONFIDENCE,
+    _apply_mapping,
     build_graph,
     extract_entities,
+    load_mapping_file,
     normalize_entities,
+    write_mapping_json,
     write_review_csv,
 )
 from bidqa.tools.graph_tool import SearchGraphTool
@@ -22,6 +27,23 @@ class FakeChat:
 
     def chat(self, messages, temperature=0.3):
         return self.reply
+
+
+class RecordingChat:
+    """记录每次请求，供「分字段分批」断言。"""
+
+    def __init__(self, handler):
+        self.handler = handler
+        self.calls: list[list[dict]] = []
+
+    def chat(self, messages, temperature=0.3):
+        self.calls.append(messages)
+        return self.handler(len(self.calls), messages)
+
+
+def _names_from_message(messages) -> list[str]:
+    content = messages[-1]["content"]
+    return json.loads(content.split("\n", 1)[1])
 
 
 # ── 单元：抽取与归一 ──
@@ -39,33 +61,113 @@ def test_extract_entities_dedup() -> None:
 
 
 def test_normalize_no_chat_is_identity() -> None:
-    mapping, review = normalize_entities({"winner": ["甲公司", "乙公司"]}, None)
-    assert mapping == {} and review == []  # 诚实降级：不归一
+    mapping, review, stats = normalize_entities({"winner": ["甲公司", "乙公司"]}, None)
+    assert mapping == {"winner": {}} and review == []  # 诚实降级：不归一
+    assert stats["calls"] == 0
 
 
 def test_normalize_high_confidence_merges_low_goes_review() -> None:
-    import json
     reply = json.dumps({
         "groups": [["安徽国控", "安徽国控集团", "安徽国资"]],
         "confidence": {"安徽国控集团": 0.93, "安徽国资": 0.60},
         }, ensure_ascii=False)
     chat = FakeChat(reply + "\n安徽国资,安徽国控")  # 尾部噪音行应被 JSON 提取忽略
     entities = {"winner": ["安徽国控", "安徽国控集团", "安徽国资"]}
-    mapping, review = normalize_entities(entities, chat)
-    assert mapping == {"安徽国控集团": "安徽国控"}  # ≥0.85 自动合并
-    assert review == [{"alias": "安徽国资", "canonical": "安徽国控",
-                       "confidence": 0.60}]  # <0.85 不自动合并
+    mapping, review, stats = normalize_entities(entities, chat)
+    assert mapping == {"winner": {"安徽国控集团": "安徽国控"}}  # ≥0.85 自动合并
+    assert review == [{"field": "winner", "alias": "安徽国资",
+                       "canonical": "安徽国控", "confidence": 0.60}]  # <0.85 不合并
+    assert stats["calls"] == 1 and stats["failed_batches"] == []
     assert MERGE_CONFIDENCE == 0.85
 
 
-def test_normalize_garbage_reply_degrades(tmp_path) -> None:
-    mapping, review = normalize_entities({"winner": ["A", "B"]}, FakeChat("不是JSON"))
-    assert mapping == {} and review == []
+def test_normalize_garbage_reply_degrades_one_batch_only() -> None:
+    mapping, review, stats = normalize_entities({"winner": ["A", "B"]}, FakeChat("不是JSON"))
+    assert mapping == {"winner": {}} and review == []
+    assert stats["calls"] == 1
+    assert stats["failed_batches"][0]["field"] == "winner"  # 失败可见，不再静默
+
+
+def test_normalize_batches_per_field_and_respects_size() -> None:
+    names = [f"公司{i:03d}" for i in range(450)]
+    entities = {"winner": names, "region": ["安徽省合肥市", "合肥市"]}
+    chat = RecordingChat(lambda i, m: json.dumps(
+        {"groups": [], "confidence": {}}, ensure_ascii=False))
+    _, _, stats = normalize_entities(entities, chat, batch_size=200)
+    assert stats["fields"]["winner"]["batches"] == 3
+    assert stats["fields"]["region"]["batches"] == 1
+    assert stats["calls"] == 4
+    winner_batches = []
+    for messages in chat.calls:
+        payload = _names_from_message(messages)
+        assert len(payload) <= 200
+        assert "字段：" in messages[-1]["content"]
+        if payload[0].startswith("公司"):
+            winner_batches.append(payload)
+        else:
+            assert payload == ["安徽省合肥市", "合肥市"]  # 不与 winner 混批
+    assert sum(len(b) for b in winner_batches) == 450
+
+
+def test_normalize_batch_failure_is_isolated() -> None:
+    names = [f"公司{i:03d}" for i in range(450)]
+
+    def handler(call_no, messages):
+        if call_no == 2:
+            raise RuntimeError("boom")
+        return json.dumps({"groups": [["公司000", "公司001"]],
+                           "confidence": {"公司001": 0.95}}, ensure_ascii=False)
+
+    mapping, _, stats = normalize_entities({"winner": names}, RecordingChat(handler),
+                                           batch_size=200)
+    assert stats["calls"] == 3
+    assert stats["failed_batches"] == [
+        {"field": "winner", "batch": 2, "names": 200, "error": "boom"}]
+    assert mapping["winner"] == {"公司001": "公司000"}  # 第 1 批结果保住，失败不中断
+
+
+def test_normalize_rejects_hallucinated_names_and_bad_confidence() -> None:
+    reply = json.dumps({
+        "groups": [["甲公司", "乙公司", "丙公司"], ["丁公司", "甲公司"]],
+        "confidence": {"乙公司": "high", "甲公司": None},
+    }, ensure_ascii=False)
+    mapping, review, _ = normalize_entities(
+        {"winner": ["甲公司", "乙公司"]}, FakeChat(reply))
+    assert mapping == {"winner": {}}  # 丙公司幻觉丢弃；丁公司组整组丢弃
+    assert review == [{"field": "winner", "alias": "乙公司",
+                       "canonical": "甲公司", "confidence": 0.0}]
+
+
+def test_normalize_collapses_transitive_mapping() -> None:
+    reply = json.dumps({"groups": [["B", "C"], ["A", "B"]],
+                        "confidence": {"C": 0.9, "B": 0.9}}, ensure_ascii=False)
+    mapping, _, _ = normalize_entities({"winner": ["A", "B", "C"]}, FakeChat(reply))
+    assert mapping["winner"] == {"B": "A", "C": "A"}  # A→B、B→C 收敛为 A
+
+
+def test_normalize_mapping_is_field_scoped() -> None:
+    mapping = {"winner": {"同名": "甲公司"}, "purchaser": {"同名": "乙公司"}}
+    rows = [{"winner": "同名", "purchaser": "同名", "subject_matter": "同名"}]
+    out = _apply_mapping(rows, mapping)
+    assert out[0]["winner"] == "甲公司"
+    assert out[0]["purchaser"] == "乙公司"
+    assert out[0]["subject_matter"] == "同名"  # 未映射字段不受影响
+    assert rows[0]["winner"] == "同名"  # 不改原行
+
+
+def test_mapping_json_roundtrip(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("bidqa.ingest.graph_build.REVIEW_DIR", tmp_path)
+    path = write_mapping_json({"winner": {"甲公司": "乙公司"}}, {"calls": 1}, "bt")
+    assert path.name == "graph_alias_mapping_bt.json"
+    loaded = load_mapping_file(path)
+    assert loaded["winner"] == {"甲公司": "乙公司"}
+    assert loaded["region"] == {}
 
 
 def test_review_csv_written(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("bidqa.ingest.graph_build.REVIEW_DIR", tmp_path)
-    path = write_review_csv([{"alias": "a", "canonical": "b", "confidence": 0.5}], "bt")
+    path = write_review_csv([{"field": "winner", "alias": "a",
+                              "canonical": "b", "confidence": 0.5}], "bt")
     assert path is not None and path.exists()
     assert "graph_merge_review_bt.csv" in str(path)
     assert write_review_csv([], "bt") is None
@@ -171,18 +273,71 @@ def test_d2_tool_end_to_end(neo: NeoClient) -> None:
     assert empty["empty"] is True
 
 
-def test_build_graph_full_flow(neo: NeoClient) -> None:
+def _stub_pg(rows: list[dict]):
     class StubPg:
         def connection(self):
             class Cur:
                 def execute(self, q):
                     class R:
                         def fetchall(self):
-                            return [dict(r) for r in ROWS]
+                            return [dict(r) for r in rows]
                     return R()
             return Cur()
+    return StubPg()
 
-    result = build_graph(StubPg(), neo, chat=None, batch="it-graph")
+
+def test_build_graph_full_flow(neo: NeoClient) -> None:
+    result = build_graph(_stub_pg(ROWS), neo, chat=None, batch="it-graph")
     assert result["rows"] == 3
     assert result["review_csv"] is None  # 无 LLM → 无归一无复核
     assert _count_one(neo, f"MATCH (p:Project) {_SCOPED} RETURN count(p) AS n") == 3
+
+
+NORML_ROWS = [
+    {"project_no": "IT-G10", "project_name": "归一测试", "subject_matter": "电梯",
+     "winner": "甲公司", "purchaser": "采购人", "agency": "代理机构",
+     "region": "安徽省合肥市", "award_amount": 1, "publish_date": date(2025, 1, 1)},
+    {"project_no": "IT-G11", "project_name": "归一测试2", "subject_matter": "电梯",
+     "winner": "甲有限公司", "purchaser": "采购人", "agency": "代理机构",
+     "region": "合肥市", "award_amount": 2, "publish_date": date(2025, 1, 2)},
+]
+
+
+def test_build_graph_dry_run_normalize_writes_artifacts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("bidqa.ingest.graph_build.REVIEW_DIR", tmp_path)
+    reply = json.dumps({"groups": [["甲公司", "甲有限公司"]],
+                        "confidence": {"甲有限公司": 0.95}}, ensure_ascii=False)
+    result = build_graph(_stub_pg(NORML_ROWS), object(), chat=FakeChat(reply),
+                         batch="bt", dry_run=True, normalize=True)
+    assert result["normalize_calls"] >= 1
+    assert result["mapping_items"] == 1
+    assert Path(result["mapping_json"]).exists()
+    assert result["review_csv"] is None  # 无 <0.85 候选
+    payload = json.loads(Path(result["mapping_json"]).read_text(encoding="utf-8"))
+    assert payload["mapping"]["winner"] == {"甲有限公司": "甲公司"}
+
+
+def test_build_graph_reuses_mapping_file_without_llm(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("bidqa.ingest.graph_build.REVIEW_DIR", tmp_path)
+    path = write_mapping_json({"winner": {"甲有限公司": "甲公司"}}, {"calls": 1}, "bt")
+
+    class ExplodingChat:
+        def chat(self, *args, **kwargs):
+            raise AssertionError("复用 mapping 文件时不应调用模型")
+
+    result = build_graph(_stub_pg(NORML_ROWS), object(), chat=ExplodingChat(),
+                         batch="bt", dry_run=True, mapping_file=path)
+    assert result["normalize_calls"] == 0
+    assert result["mapping_source"] == str(path)
+    assert result["mapping"]["winner"] == {"甲有限公司": "甲公司"}
+
+
+def test_build_graph_default_does_not_call_llm() -> None:
+    class ExplodingChat:
+        def chat(self, *args, **kwargs):
+            raise AssertionError("默认建图不应调用模型")
+
+    result = build_graph(_stub_pg(NORML_ROWS), object(), chat=ExplodingChat(),
+                         batch="bt", dry_run=True)
+    assert result["normalize_calls"] == 0
+    assert result["mapping_items"] == 0
