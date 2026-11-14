@@ -342,3 +342,40 @@ def test_english_empty_answer_fallback() -> None:
     loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
     r = loop.run("空调采购项目有哪些？", lang="en")
     assert r.answer == EMPTY_ANSWER_TEXT_EN
+
+
+# ── 断流即收（C3 清债 #1：2026-11-11 演示日缺陷——流中异常丢弃已流正文+重放全文）──
+def test_stream_plain_keeps_partial_on_break() -> None:
+    """流中异常：保留已流正文（恰一次下发，不重放、不追加兜底）。"""
+    from bidqa.agent.loop import AgentLoop as _Loop
+
+    class BreakStreamChat(FakeChat):
+        def chat_stream(self, messages, temperature: float = 0.3):
+            yield "已流出的一半。"
+            raise RuntimeError("connection reset")
+
+    events: list[tuple[str, dict]] = []
+    loop = _Loop(BreakStreamChat(), ToolRegistry(), ToolRunner(ToolRegistry()))
+    text = loop._stream_plain([{"role": "user", "content": "q"}],
+                              lambda k, p: events.append((k, p)))
+    assert text == "已流出的一半。"
+    tokens = [payload["text"] for kind, payload in events if kind == "token"]
+    assert tokens == ["已流出的一半。"]  # 恰一次，无全文重放
+
+
+def test_stream_plain_empty_stream_falls_back_once() -> None:
+    """空流（零 token 即断）：回退非流式一次并下发（原语义保留）。"""
+    from bidqa.agent.loop import AgentLoop as _Loop
+
+    class EmptyThenFallbackChat(FakeChat):
+        def chat_stream(self, messages, temperature: float = 0.3):
+            raise RuntimeError("upstream empty before first byte")
+        def chat(self, messages, temperature: float = 0.3):
+            return "非流式兜底回答。"
+
+    events: list[tuple[str, dict]] = []
+    loop = _Loop(EmptyThenFallbackChat(), ToolRegistry(), ToolRunner(ToolRegistry()))
+    text = loop._stream_plain([{"role": "user", "content": "q"}],
+                              lambda k, p: events.append((k, p)))
+    assert text == "非流式兜底回答。"
+    assert [payload["text"] for kind, payload in events if kind == "token"] == ["非流式兜底回答。"]

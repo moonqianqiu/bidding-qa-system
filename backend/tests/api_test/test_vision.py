@@ -11,7 +11,7 @@ import time
 
 from fastapi.testclient import TestClient
 
-from bidqa.api.chat_stream import _image_context_block
+from bidqa.application.vision import image_context_block
 from bidqa.api.vision import RefStore, get_ref_store
 from bidqa.main import create_app
 
@@ -91,7 +91,7 @@ def test_ref_store_capacity_evicts_oldest() -> None:
 
 def test_image_context_block_injection() -> None:
     ref = get_ref_store().put("招标文件第3页保证金表格")
-    block = _image_context_block([ref, "img_不存在0000"])
+    block = image_context_block([ref, "img_不存在0000"])
     assert block.startswith("【图片内容 1】招标文件第3页保证金表格")
-    assert _image_context_block([]) == ""
-    assert _image_context_block(["img_不存在0000"]) == ""  # 未知 ref 静默跳过
+    assert image_context_block([]) == ""
+    assert image_context_block(["img_不存在0000"]) == ""  # 未知 ref 静默跳过

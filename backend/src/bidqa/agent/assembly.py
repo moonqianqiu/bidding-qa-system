@@ -1,7 +1,9 @@
-"""B7 响应组装（docs/01 §3.4 done 字段 + §3.7 图表规格）。
+"""B7 响应组装（docs/01 §3.4 done 字段 + §3.7 图表规格）+ 工具表组装唯一实现。
 
 来源跨轮去重合并、图表内容寻址 id、分阶段耗时（主路径与降级路径段名两套不合并）、
 收尾事件。纯函数，SSE 层与评测内部层共用同一出口（口径一致）。
+build_registry 是工具表组装的唯一实现（重构 C3 收口）：原 chat_stream._worker 与
+cli._eval_agent 各写一遍的「改一处漏一处」定时炸弹就此拆除。
 """
 
 from __future__ import annotations
@@ -12,7 +14,32 @@ import math
 from copy import deepcopy
 from typing import Any
 
+from bidqa.clients.tavily import web_cache
+from bidqa.tools.base import ToolRegistry
+from bidqa.tools.db_tool import SearchDatabaseTool
+from bidqa.tools.graph_tool import SearchGraphTool
+from bidqa.tools.knowledge import SearchKnowledgeTool
+from bidqa.tools.web import SearchWebTool
+
 SCHEMA_V = 1
+
+
+def build_registry(retriever, chat, bp, neo, web_clients: dict, reranker) -> ToolRegistry:
+    """按可用组件装配四件套工具表（能力缺失 = 不注册该工具，health/评测同口径）。
+
+    retriever/bp/neo/web_clients 允许 None/空 dict（对应能力降级）；chat 由调用方
+    判空（无主模型时整条问答路径不可用，不是「少一个工具」）。
+    """
+    registry = ToolRegistry()
+    if retriever is not None:
+        registry.register(SearchKnowledgeTool(retriever, chat))
+    if bp is not None:
+        registry.register(SearchDatabaseTool(bp))
+    if neo is not None:
+        registry.register(SearchGraphTool(neo))
+    if web_clients:
+        registry.register(SearchWebTool(web_clients, web_cache(), reranker=reranker))
+    return registry
 
 
 def dedup_sources(sources: list[dict]) -> list[dict]:

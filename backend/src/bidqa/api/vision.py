@@ -1,27 +1,24 @@
-"""POST /api/vision（docs/01 §3.1；图片解析 → image_ref）。
+"""POST /api/vision（docs/01 §3.1；图片解析 → image_ref）——HTTP 适配层。
 
 流程：体积校验（base64 > 4M 字符 → 413/4131，参考项目同款口径）→ 视觉槽位解析
-（多模态 list-content，同一 OpenAI-compatible 适配器）→ 描述入进程内 TTL 缓存
-（10 分钟，§3.3「服务端缓存图片描述」；单进程约定 docs/01 §6）→
+（多模态 list-content，同一 OpenAI-compatible 适配器）→ 描述入 application 层
+TTL 缓存（10 分钟，§3.3；chat worker 经 application.vision 读取）→
 返回 {image_ref, description, filename}。聊天端点只收 image_refs（禁止 base64
-直传聊天端点），worker 按 ref 取缓存描述注入上下文。仅解析不检索；
-解析失败 5031，绝不返回空描述充数。
+直传聊天端点）。仅解析不检索；解析失败 5031，绝不返回空描述充数。
+ref 状态与 image_context_block 组装在 application/vision（重构 C3 归位）。
 """
 
 from __future__ import annotations
-
-import threading
-import time
-import uuid
-from typing import Any
 
 import base64
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from typing import Any
 
 from bidqa.api.ratelimit import rate_identity
+from bidqa.application.vision import RefStore, get_ref_store  # noqa: F401  # 再导出：测试与 chat 共用
 from bidqa.config import get_settings
 from bidqa.errors import (
     EC_PAYLOAD_TOO_LARGE, EC_RATE_LIMITED, EC_SOURCE_DEGRADED, EC_VALIDATION, error_body)
@@ -30,8 +27,6 @@ from bidqa.service import build_vision
 router = APIRouter()
 
 MAX_B64_CHARS = 4_000_000  # docs/01 §3.1：base64 超 4M 字符 → 413（参考项目同款口径）
-REF_TTL_SECONDS = 600.0  # §3.3：服务端缓存图片描述 TTL 10 分钟
-REF_STORE_MAX = 64  # 有界防泄漏；满了先清过期再丢最旧（web_cache 同款策略）
 
 VISION_SYSTEM_PROMPT = (
     "你是招投标文件图片解析助手。只描述图片中真实可见的内容（文字/表格/数字/布局），"
@@ -42,49 +37,6 @@ VISION_USER_PROMPT = "请解析这张图片的内容，输出结构化的文字�
 class VisionRequest(BaseModel):
     image: str = Field(min_length=32, max_length=MAX_B64_CHARS + 64)
     filename: str | None = Field(default=None, max_length=200)
-
-
-class RefStore:
-    """image_ref → 描述的进程内 TTL 缓存（单进程约定；重启即清，前端重传即可）。"""
-
-    def __init__(self, ttl: float = REF_TTL_SECONDS, max_entries: int = REF_STORE_MAX):
-        self.ttl = ttl
-        self.max_entries = max_entries
-        self._items: dict[str, tuple[str, float]] = {}
-        self._lock = threading.Lock()
-
-    def put(self, description: str) -> str:
-        now = time.monotonic()
-        with self._lock:
-            if len(self._items) >= self.max_entries:
-                alive = {k: v for k, v in self._items.items() if now - v[1] < self.ttl}
-                if len(alive) >= self.max_entries:  # 全活着：丢最旧（web_cache 同款策略）
-                    oldest = sorted(alive, key=lambda k: alive[k][1])
-                    for k in oldest[:len(alive) - self.max_entries + 1]:
-                        alive.pop(k, None)
-                self._items = alive
-            ref = f"img_{uuid.uuid4().hex[:12]}"
-            self._items[ref] = (description, now)
-            return ref
-
-    def get(self, ref: str) -> str | None:
-        now = time.monotonic()
-        with self._lock:
-            item = self._items.get(ref)
-            if item is None:
-                return None
-            description, ts = item
-            if now - ts >= self.ttl:
-                self._items.pop(ref, None)
-                return None
-            return description
-
-
-_store = RefStore()
-
-
-def get_ref_store() -> RefStore:
-    return _store
 
 
 def _data_url(image: str) -> str:
@@ -162,5 +114,5 @@ def vision(payload: VisionRequest, request: Request,
             content=error_body(EC_SOURCE_DEGRADED, "数据源降级/不可用",
                                detail={"source": "vision: 上游返回空描述"}),
         )
-    ref = _store.put(description)
+    ref = get_ref_store().put(description)
     return {"image_ref": ref, "description": description, "filename": payload.filename}

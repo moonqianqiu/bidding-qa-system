@@ -17,17 +17,12 @@ from bidqa.api.ratelimit import rate_identity
 from bidqa.clients.llm import ChatClient
 from bidqa.config import get_settings
 from bidqa.errors import EC_RATE_LIMITED, EC_SOURCE_DEGRADED, error_body
+from bidqa.agent.prompts import RAG_DIRECT_SYSTEM as SYSTEM_PROMPT  # 提示词收口（C3）
 from bidqa.rag.crag import crag_retrieve
 from bidqa.rag.retrieve import FINAL_TOP_K, RetrievalResult, Retriever
 from bidqa.service import build_chat, build_retriever
 
 router = APIRouter()
-
-SYSTEM_PROMPT = (
-    "你是招投标领域问答助手。只依据给定的【检索材料】作答；材料未覆盖的部分回答"
-    "「知识库未包含」。答案中引用材料时标注 [n]（n 为材料序号）。"
-)
-
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)

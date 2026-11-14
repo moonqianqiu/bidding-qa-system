@@ -22,7 +22,7 @@ from typing import Callable
 SRC = Path(__file__).resolve().parents[1] / "src" / "bidqa"
 
 # ── 模块分组（短名前缀 → 角色）───────────────────────────────────────
-BUSINESS_PREFIXES = ("agent", "tools", "rag", "clients", "database",
+BUSINESS_PREFIXES = ("application", "agent", "tools", "rag", "clients", "database",
                      "ingest", "eval", "obs", "auth")  # 业务/适配层
 ENTRY_PREFIXES = ("main", "cli")  # 入口：允许 import 一切
 API_PREFIX = "api"
@@ -105,7 +105,6 @@ ALLOWLIST: dict[str, set[tuple[str, str]]] = {
     # 过渡：bidqa.service 组合根按职责拆入窄 factory（重构方案 §4.1）
     "R6-api不得import组合根service": {
         ("api.ask", "service"),            # C3: application/ask + rag/clients factory
-        ("api.chat_stream", "service"),    # C3: application/chat + database/rag factory
         ("api.vision", "service"),         # C3: application/vision + clients/chat_factory
         ("api.auth", "service"),             # C4: auth/factory
         ("api.middleware", "service"),       # C4: auth/factory
@@ -113,9 +112,7 @@ ALLOWLIST: dict[str, set[tuple[str, str]]] = {
         ("api.system.router", "service"),  # C4: application/admin
     },
     # 过渡：图片 ref store 归 application/vision（C3 迁移后清零）
-    "R5-chat不得依赖api.vision": {
-        ("api.chat_stream", "api.vision"),  # C3: image_ref 读取改 application 接口
-    },
+    "R5-chat不得依赖api.vision": set(),  # C3 归 application/vision 后清零——空集存档
     # 业务路由 import 观测路由（note_request）：C1 pilot 已收口至 obs——空集存档
     "R4-业务路由不得import观测路由": set(),
     # 业务层反向依赖 HTTP/CLI/组合根：现状为零违规——永久护栏
@@ -136,8 +133,7 @@ _RULES: list[tuple[str, Callable[[str], bool], Callable[[str], str | None]]] = [
      lambda m: _in(API_PREFIX, m) and not _in("api.system", m),
      _prefix_matcher("api.system")),
     ("R5-chat不得依赖api.vision",
-     # 过渡期：chat 运行时还在 api/chat_stream.py（C3 起为 api/chat/ 包），两者都管
-     lambda m: _in("api.chat", m) or m == "api.chat_stream",
+     lambda m: _in("api.chat", m),
      _prefix_matcher("api.vision")),
     ("R6-api不得import组合根service",
      lambda m: _in(API_PREFIX, m), lambda t: "service" if t == "service" else None),

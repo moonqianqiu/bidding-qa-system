@@ -15,28 +15,20 @@ from bidqa.config import ConfigError, get_settings
 
 def _eval_agent(args) -> int:
     """G3 离线 Agent 评测：内部函数层（docs/01 §3.6），真实主模型（M2-12 验收）。"""
+    from bidqa.agent.assembly import build_registry
     from bidqa.agent.loop import AgentLoop
     from bidqa.eval.agent_eval import run_agent_eval, write_snapshot
     from bidqa.service import (
-        build_chat, build_neo, build_pg, build_retriever,
+        build_chat, build_neo, build_reranker, build_retriever,
     )
-    from bidqa.tools.base import ToolRegistry
-    from bidqa.tools.db_tool import SearchDatabaseTool
-    from bidqa.tools.graph_tool import SearchGraphTool
-    from bidqa.tools.knowledge import SearchKnowledgeTool
     from bidqa.tools.runner import ToolRunner
 
     chat = build_chat()
     if chat is None:
         print("主模型未配置（CHAT_*），无法运行 agent 评测", file=sys.stderr)
         return 2
-    registry = ToolRegistry()
-    if retriever := build_retriever():
-        registry.register(SearchKnowledgeTool(retriever, chat))
-    if pg := build_pg():
-        registry.register(SearchDatabaseTool(pg))
-    if neo := build_neo():
-        registry.register(SearchGraphTool(neo))
+    registry = build_registry(build_retriever(), chat, build_pg(), build_neo(),
+                              {}, build_reranker())
     runner = ToolRunner(registry)
 
     def loop_factory():

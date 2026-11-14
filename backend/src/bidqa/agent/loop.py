@@ -237,17 +237,22 @@ class AgentLoop:
         return result
 
     def _stream_plain(self, messages: list[dict], events: EventFn) -> str:
-        """无工具强制生成，真流式下发 token；流式失败回退非流式。"""
+        """无工具强制生成，真流式下发 token。
+
+        断流即收（2026-11-11 演示日缺陷修复，C3 清债 #1）：流中异常不再丢弃已流
+        正文、也不再整段重放非流式结果造成「半截+全文」拼接——已流部分即答案
+        （与前端 A8 中断保留语义对齐）；一个 token 都没流出来才回退非流式一次。
+        """
         parts: list[str] = []
         try:
             for chunk in self.chat.chat_stream(messages, temperature=self.temperature):
                 parts.append(chunk)
                 events("token", {"text": chunk})
-            text = "".join(parts)
-            if text.strip():
-                return text
         except Exception:
-            pass
+            pass  # 已流正文保留，不补发全文
+        text = "".join(parts)
+        if text.strip():
+            return text
         text = str(self.chat.chat(messages, temperature=self.temperature))
         events("token", {"text": text})
         return text

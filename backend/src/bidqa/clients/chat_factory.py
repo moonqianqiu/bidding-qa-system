@@ -38,3 +38,12 @@ def build_chat_for(provider: str | None) -> ChatClient | None:
         client = ChatClient(profile["base_url"], profile["api_key"], profile["model"])
         _profile_chats[provider] = client
     return client
+
+
+@lru_cache(maxsize=1)
+def build_vision() -> ChatClient | None:
+    """视觉槽位客户端（未配置=降级 None，/api/vision 5031；同一 OpenAI-compatible 适配器）。"""
+    s = get_settings()
+    if not s.has_vision:
+        return None
+    return ChatClient(s.VISION_BASE_URL, s.VISION_API_KEY, s.VISION_MODEL)

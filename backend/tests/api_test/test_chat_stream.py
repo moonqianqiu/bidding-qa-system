@@ -12,7 +12,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from bidqa.agent.loop import LoopResult
-from bidqa.api import chat_stream as cs
+from bidqa.api.chat import guards as guards_mod
+from bidqa.api.chat import stream as stream_mod
+from bidqa.application.chat import degrade as degrade_mod
+from bidqa.application.chat import history as history_mod
+from bidqa.application.chat import worker as worker_mod
 from bidqa.api.ratelimit import SlidingWindowLimiter
 from bidqa.clients.siliconflow import DataSourceError
 from bidqa.main import create_app
@@ -67,16 +71,21 @@ def client(settings_factory, monkeypatch):
     settings = settings_factory()
     app = create_app(settings)
     yield TestClient(app)
-    cs._client_msg_seen.clear()
+    guards_mod.clear_seen()
 
 
 def patch_service(monkeypatch, chat=None, retriever=None, pg=None, web_clients=None) -> None:
-    import bidqa.api.chat_stream as mod
-    monkeypatch.setattr(mod, "build_chat", lambda: chat)
-    monkeypatch.setattr(mod, "build_chat_for", lambda provider: chat)
-    monkeypatch.setattr(mod, "build_retriever", lambda: retriever or FakeRetriever())
-    monkeypatch.setattr(mod, "build_conversation_store", lambda: pg)
-    monkeypatch.setattr(mod, "build_web_clients", lambda: dict(web_clients or {}))
+    """patch 缝随 C3 拆分移到 application 层；bp/neo/reranker 钉 None 保测试密闭。"""
+    monkeypatch.setattr(worker_mod, "build_chat_for", lambda provider: chat)
+    monkeypatch.setattr(worker_mod, "build_retriever", lambda: retriever or FakeRetriever())
+    monkeypatch.setattr(worker_mod, "build_conversation_store", lambda: pg)
+    monkeypatch.setattr(worker_mod, "build_web_clients", lambda: dict(web_clients or {}))
+    monkeypatch.setattr(worker_mod, "build_neo", lambda: None)
+    monkeypatch.setattr(worker_mod, "build_bp_repo", lambda: None)
+    monkeypatch.setattr(worker_mod, "build_reranker", lambda: None)
+    monkeypatch.setattr(degrade_mod, "build_chat", lambda: chat)
+    monkeypatch.setattr(degrade_mod, "build_retriever", lambda: retriever or FakeRetriever())
+    monkeypatch.setattr(stream_mod, "build_chat", lambda: chat)  # 5031 前置门
 
 
 def stream_events(client: TestClient, payload: dict, headers: dict | None = None) -> list[dict]:
@@ -182,7 +191,8 @@ def test_rate_limit_429_with_retry_after(client, monkeypatch) -> None:
     patch_service(monkeypatch, chat=FakeChat(tools_script=[text_msg("ok")]))
     limiter = SlidingWindowLimiter(max_requests=1)
     # 端点经 rate_identity 选桶（用户体系后按身份分桶）；此处钉死单次配额桶
-    monkeypatch.setattr(cs, "rate_identity", lambda request, settings: (limiter, "test"))
+    monkeypatch.setattr(stream_mod, "rate_identity",
+                        lambda request, settings: (limiter, "test"))
     first = client.post("/api/chat/stream", json={"message": "a"})
     assert first.status_code == 200
     second = client.post("/api/chat/stream", json={"message": "b"})
@@ -259,7 +269,7 @@ def test_build_done_clarify_vs_main() -> None:
 def test_lang_field_schema_contract() -> None:
     """缺省 zh（旧 payload 兼容）/ en 接受 / 其它值拒绝。"""
     from pydantic import ValidationError
-    from bidqa.api.chat_stream import ChatStreamRequest
+    from bidqa.api.chat.schema import ChatStreamRequest
     assert ChatStreamRequest(message="hi").lang == "zh"
     assert ChatStreamRequest(message="hi", lang="en").lang == "en"
     with pytest.raises(ValidationError):
@@ -357,17 +367,17 @@ def test_guest_stream_skips_persist_and_caches_history(settings_factory, monkeyp
     pg = RecordingPg()
     patch_service(monkeypatch, chat=FakeChat(tools_script=[text_msg("答1")]), pg=pg)
     conv = "11111111-1111-1111-1111-111111111111"
-    cs.guest_history.clear()
+    history_mod.guest_history.clear()
     try:
         events = stream_events(client2, {"message": "问1", "conversation_id": conv},
                                headers={"Authorization": "Bearer tg"})
         assert events[-1]["type"] == "done"
         assert pg.upserts == []  # 游客不落库
-        assert cs.guest_history.load(conv) == [
+        assert history_mod.guest_history.load(conv) == [
             {"role": "user", "content": "问1"}, {"role": "assistant", "content": "答1"}]
         assert events[-1]["conversation_id"] == conv
     finally:
-        cs.guest_history.clear()
+        history_mod.guest_history.clear()
 
 
 def test_user_stream_stamps_owner(settings_factory, monkeypatch):
