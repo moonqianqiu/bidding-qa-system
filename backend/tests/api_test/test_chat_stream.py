@@ -14,11 +14,13 @@ from fastapi.testclient import TestClient
 from bidqa.agent.loop import LoopResult
 from bidqa.api.chat import guards as guards_mod
 from bidqa.api.chat import stream as stream_mod
+from bidqa.application.chat import availability as availability_mod
 from bidqa.application.chat import degrade as degrade_mod
 from bidqa.application.chat import history as history_mod
 from bidqa.application.chat import worker as worker_mod
 from bidqa.api.ratelimit import SlidingWindowLimiter
 from bidqa.clients.siliconflow import DataSourceError
+from bidqa.config import Settings
 from bidqa.main import create_app
 from bidqa.rag.retrieve import Hit, RetrievalResult
 
@@ -83,9 +85,10 @@ def patch_service(monkeypatch, chat=None, retriever=None, pg=None, web_clients=N
     monkeypatch.setattr(worker_mod, "build_neo", lambda: None)
     monkeypatch.setattr(worker_mod, "build_bp_repo", lambda: None)
     monkeypatch.setattr(worker_mod, "build_reranker", lambda: None)
-    monkeypatch.setattr(degrade_mod, "build_chat", lambda: chat)
+    monkeypatch.setattr(degrade_mod, "build_chat_for", lambda provider: chat)
     monkeypatch.setattr(degrade_mod, "build_retriever", lambda: retriever or FakeRetriever())
-    monkeypatch.setattr(stream_mod, "build_chat", lambda: chat)  # 5031 前置门
+    monkeypatch.setattr(availability_mod, "build_chat_for",
+                        lambda provider: chat)  # 5031 前置门（与 worker 同一判据）
 
 
 def stream_events(client: TestClient, payload: dict, headers: dict | None = None) -> list[dict]:
@@ -184,6 +187,61 @@ def test_http_5031_when_chat_unconfigured(client, monkeypatch) -> None:
     resp = client.post("/api/chat/stream", json={"message": "hi"})
     assert resp.status_code == 503
     assert resp.json()["error_code"] == 5031
+
+
+# ── 命名档前置门（2026-11-14 审计缺陷：只配命名档被主槽位判据误 5031）──
+def _profile_only_client(monkeypatch, chat: FakeChat | None) -> TestClient:
+    """只配命名档、主槽位留空的部署；availability/worker/degrade 三缝同路由。"""
+    monkeypatch.setenv("CHAT_FAST_BASE_URL", "http://profile.local")
+    monkeypatch.setenv("CHAT_FAST_API_KEY", "k-fast")
+    monkeypatch.setenv("CHAT_FAST_MODEL", "fast-model")
+    settings = Settings(_env_file=None, QDRANT_URL="http://q", USERS_ENABLED="false")
+
+    def route(provider: str | None):
+        return chat if provider == "fast" else None  # 未知/缺省 → 主槽位（不存在）
+
+    monkeypatch.setattr(availability_mod, "build_chat_for", route)
+    monkeypatch.setattr(worker_mod, "build_chat_for", route)
+    monkeypatch.setattr(degrade_mod, "build_chat_for", route)
+    monkeypatch.setattr(worker_mod, "build_retriever", lambda: FakeRetriever())
+    monkeypatch.setattr(worker_mod, "build_conversation_store", lambda: None)
+    monkeypatch.setattr(worker_mod, "build_web_clients", lambda: {})
+    monkeypatch.setattr(worker_mod, "build_neo", lambda: None)
+    monkeypatch.setattr(worker_mod, "build_bp_repo", lambda: None)
+    monkeypatch.setattr(worker_mod, "build_reranker", lambda: None)
+    return TestClient(create_app(settings))
+
+
+def test_profile_only_provider_passes_precheck(monkeypatch) -> None:
+    client = _profile_only_client(monkeypatch, FakeChat(tools_script=[text_msg("依据材料[1]直答。")]))
+    events = stream_events(client, {"message": "问题", "provider": "fast"})
+    assert events[-1]["type"] == "done"
+    assert events[-1]["tool_name"] == ""  # 纯直答轮
+
+
+def test_profile_only_unknown_provider_falls_back_to_absent_main(monkeypatch) -> None:
+    client = _profile_only_client(monkeypatch, FakeChat(plain_script=["x"]))
+    resp = client.post("/api/chat/stream", json={"message": "hi", "provider": "nope"})
+    assert resp.status_code == 503 and resp.json()["error_code"] == 5031
+
+
+def test_profile_only_no_provider_uses_absent_main(monkeypatch) -> None:
+    client = _profile_only_client(monkeypatch, FakeChat(plain_script=["x"]))
+    resp = client.post("/api/chat/stream", json={"message": "hi"})
+    assert resp.status_code == 503 and resp.json()["error_code"] == 5031
+
+
+def test_degrade_uses_provider_profile(monkeypatch) -> None:
+    """降级直答与主路径同源 build_chat_for：命名档部署主路径失败后仍可降级。"""
+    called: list[str | None] = []
+    chat = FakeChat(plain_script=["依据材料[1]直答。"])
+    monkeypatch.setattr(degrade_mod, "build_chat_for",
+                        lambda provider: (called.append(provider), chat)[1])
+    monkeypatch.setattr(degrade_mod, "build_retriever", lambda: FakeRetriever())
+    out = degrade_mod.direct_rag_answer(
+        "问题", "zh", [], lambda stage, data: None, "boom", provider="fast")
+    assert called == ["fast"]
+    assert out.answer == "依据材料[1]直答。"
 
 
 # ── B4 限流 / 4091 幂等 ──

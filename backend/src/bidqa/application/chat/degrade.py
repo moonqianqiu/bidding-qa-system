@@ -13,7 +13,7 @@ from typing import Any, Callable
 from bidqa.agent.loop import LoopResult
 from bidqa.agent.prompts import RAG_DIRECT_SYSTEM, RAG_DIRECT_SYSTEM_EN_SUFFIX
 from bidqa.application.vision import image_context_block
-from bidqa.clients.chat_factory import build_chat
+from bidqa.clients.chat_factory import build_chat_for
 from bidqa.clients.siliconflow import DataSourceError
 from bidqa.rag.factory import build_retriever
 
@@ -21,12 +21,17 @@ EventFn = Callable[[str, dict[str, Any]], None]
 
 
 def direct_rag_answer(question: str, lang: str, image_refs: list[str],
-                      emit: EventFn, reason: str) -> LoopResult:
-    """降级直答：检索 → 有料生成（真流式）/ 无料诚实兜底；不编造、不挂死。"""
+                      emit: EventFn, reason: str,
+                      provider: str | None = None) -> LoopResult:
+    """降级直答：检索 → 有料生成（真流式）/ 无料诚实兜底；不编造、不挂死。
+
+    provider 与主路径同源（build_chat_for）：只配命名档的部署主路径失败后，
+    降级也走同一命名档，而不是静默回落到可能不存在的主槽位。
+    """
     emit("status", {"stage": "降级直答"})
     t0 = time.perf_counter()
     retriever = build_retriever()
-    chat = build_chat()
+    chat = build_chat_for(provider)
     if retriever is None or chat is None:
         raise DataSourceError("chat", "降级路径不可用")
     result = retriever.retrieve(question)

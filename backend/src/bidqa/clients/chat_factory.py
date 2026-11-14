@@ -40,6 +40,11 @@ def build_chat_for(provider: str | None) -> ChatClient | None:
     return client
 
 
+def clear_profile_chats() -> None:
+    """清空命名档客户端缓存（测试隔离；与 lru_cache 工厂的 cache_clear 同口径）。"""
+    _profile_chats.clear()
+
+
 def build_subject_batch_chat() -> ChatClient | None:
     """数据加工批量通道（SUBJECT_BATCH_*）：subject-batch 与图谱归一共用。
 

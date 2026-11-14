@@ -20,8 +20,8 @@ from bidqa.api.chat.guards import check_client_msg_id
 from bidqa.api.chat.schema import ChatStreamRequest
 from bidqa.api.chat.sse import SseChannel
 from bidqa.api.ratelimit import rate_identity
+from bidqa.application.chat.availability import chat_available
 from bidqa.auth.identity import ROLE_GUEST
-from bidqa.clients.chat_factory import build_chat
 from bidqa.config import get_settings
 from bidqa.errors import EC_RATE_LIMITED, EC_SOURCE_DEGRADED, error_body
 
@@ -73,8 +73,9 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
                             content=error_body(4091, conflict["message"],
                                                detail=conflict["detail"]))
 
-    # 前置可用性检查：主模型缺失 → HTTP 5031（流未开始，错误体语义明确）
-    if build_chat() is None:
+    # 前置可用性检查：该 provider 实际会用的聊天客户端缺失 → HTTP 5031
+    # （口径与 worker 主路径一致：缺省/未知 provider 回主槽位；只配命名档不再误 5031）
+    if not chat_available(payload.provider):
         return JSONResponse(
             status_code=503,
             content=error_body(EC_SOURCE_DEGRADED, "数据源降级/不可用",

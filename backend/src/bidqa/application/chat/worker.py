@@ -80,7 +80,7 @@ def run_chat_job(job: ChatJob, emit: EventFn) -> JobOutcome:
     except Exception as exc:
         try:
             result = direct_rag_answer(job.message, job.lang, job.image_refs,
-                                       emit, str(exc))
+                                       emit, str(exc), provider=job.provider)
             result.conversation_id = job.conversation_id
             return JobOutcome(result=result)
         except Exception:

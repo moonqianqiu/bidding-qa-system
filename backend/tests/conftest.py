@@ -72,6 +72,7 @@ def _reset_caches():
         rag_factory.build_retriever.cache_clear()
         chat_factory.build_chat.cache_clear()
         chat_factory.build_vision.cache_clear()
+        chat_factory.clear_profile_chats()
         db_factory.build_pg.cache_clear()
         web_factory.build_web_clients.cache_clear()
         auth_factory.build_users_store.cache_clear()
