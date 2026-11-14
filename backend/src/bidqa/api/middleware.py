@@ -20,7 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
-from bidqa.auth_core import MACHINE_USERNAME, ROLE_ADMIN, ROLE_GUEST, Identity
+from bidqa.auth.identity import MACHINE_USERNAME, ROLE_ADMIN, ROLE_GUEST, Identity
 from bidqa.errors import EC_FORBIDDEN, EC_UNAUTHORIZED, error_body
 from bidqa.service import build_users_store
 

@@ -351,7 +351,7 @@ def _armed_stream_client(settings_factory, monkeypatch, ident):
 
 def test_guest_stream_skips_persist_and_caches_history(settings_factory, monkeypatch):
     """游客语义：不落库（诚实）+ 进程内历史缓存（多轮上下文仍可用，重启即失）。"""
-    from bidqa.auth_core import Identity
+    from bidqa.auth.identity import Identity
 
     ident = Identity("guest", None, "guest", "tg")
     client2 = _armed_stream_client(settings_factory, monkeypatch, ident)
@@ -373,7 +373,7 @@ def test_guest_stream_skips_persist_and_caches_history(settings_factory, monkeyp
 
 def test_user_stream_stamps_owner(settings_factory, monkeypatch):
     """普通用户流：落库带 user_id 归属；机器/legacy（无身份）保持 NULL 机器域。"""
-    from bidqa.auth_core import Identity
+    from bidqa.auth.identity import Identity
 
     ident = Identity("user", "22222222-2222-2222-2222-222222222221", "alice", "t-fixed")
     client2 = _armed_stream_client(settings_factory, monkeypatch, ident)

@@ -1,56 +1,17 @@
-"""用户体系认证内核（docs/01 §3.1 用户体系段）：三角色 admin/user/guest。
+"""会话与用户存储（docs/01 §3.1 用户体系段）：users/sessions/app_settings 三表访问。
 
-零新依赖：密码散列用 hashlib.scrypt（stdlib），会话令牌用 secrets.token_urlsafe。
-opaque token 存 sessions 表（可吊销、可踢人，比 JWT 诚实）；会话过期在 resolve 时
-惰性剔除（顺手清理，无需后台任务）。机器主 token 不经过本模块（中间件直接比对）。
+持 PgClient 复用其连接与 schema（schema 由 build_pg().ensure_schema() 统一执行，
+schema.sql 单一事实来源）；种子由 auth/factory（原 service.build_users_store）
+首次构建时调用（进程内一次）。会话过期在 resolve 时惰性剔除（顺手清理，无需后台任务）。
 """
 
 from __future__ import annotations
 
-import hashlib
-import secrets
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 
-ROLE_ADMIN = "admin"
-ROLE_USER = "user"
-ROLE_GUEST = "guest"
-MACHINE_USERNAME = "__machine__"  # 机器主 token 的虚拟身份名（无 users 行，user_id=None）
-
-
-@dataclass
-class Identity:
-    """请求身份（中间件解析后存 request.state.identity，端点据此做数据隔离）。"""
-
-    role: str  # admin / user / guest
-    user_id: str | None  # guest 会话与机器主 token 为 None
-    username: str
-    token: str = ""  # 原始会话令牌（限流分桶用；机器主 token 不存）
-
-
-def hash_password(password: str) -> str:
-    """scrypt 散列，格式 scrypt$n$r$p$salt_hex$dk_hex（自带参数，verify 自解析）。"""
-    salt = secrets.token_bytes(16)
-    dk = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1, dklen=32)
-    return f"scrypt${2**14}$8$1${salt.hex()}${dk.hex()}"
-
-
-def verify_password(password: str, stored: str) -> bool:
-    """常数时间比对；格式不认识/参数异常一律 False（不抛错）。"""
-    try:
-        scheme, n, r, p, salt_hex, dk_hex = stored.split("$")
-        if scheme != "scrypt":
-            return False
-        dk = hashlib.scrypt(password.encode("utf-8"), salt=bytes.fromhex(salt_hex),
-                            n=int(n), r=int(r), p=int(p), dklen=32)
-        return secrets.compare_digest(dk.hex(), dk_hex)
-    except Exception:
-        return False
-
-
-def mint_token() -> str:
-    return secrets.token_urlsafe(32)
+from bidqa.auth.identity import ROLE_GUEST, Identity
+from bidqa.auth.passwords import hash_password, mint_token, verify_password
 
 
 class UsersStore:
@@ -135,7 +96,7 @@ class UsersStore:
         self._conn().commit()
         return cur.rowcount > 0
 
-    # ── 管理动作（CLI 本轮；控制台界面下轮）──
+    # ── 管理动作（CLI `bidqa user` 与控制台 API 同款语义）──
     def create_user(self, username: str, password: str, role: str) -> str | None:
         """重名返回 None（调用方报错）；role 仅 admin/user。"""
         dup = self._conn().execute(

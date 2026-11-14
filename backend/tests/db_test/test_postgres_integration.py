@@ -183,7 +183,7 @@ def test_query_bp_reverse_matching(clean_pg: PgClient) -> None:
 # ── 用户体系（docs/01 §3.1）：UsersStore 真实 PG 集成；IT-auth 前缀 try/finally 清理 ──
 def test_users_store_seed_login_resolve_roundtrip(pg_client: PgClient) -> None:
     """空表种子幂等 → create_user → login 正/误 → resolve → disable 即刻失效 → logout。"""
-    from bidqa.auth_core import UsersStore
+    from bidqa.auth.store import UsersStore
 
     store = UsersStore(pg_client)
     name = "IT-auth-alice"
@@ -221,7 +221,7 @@ def test_users_store_seed_login_resolve_roundtrip(pg_client: PgClient) -> None:
 
 def test_guest_toggle_and_visibility(pg_client: PgClient) -> None:
     """游客开关运行时切换 + 会话可见域（user 仅本人 / admin 含机器域 / 机器仅 NULL）。"""
-    from bidqa.auth_core import UsersStore
+    from bidqa.auth.store import UsersStore
 
     store = UsersStore(pg_client)
     try:
@@ -275,7 +275,7 @@ def test_guest_toggle_and_visibility(pg_client: PgClient) -> None:
 # ── B12 控制台全库会话管理（真实 PG 集成；IT-console- 前缀 try/finally 清理）──
 def test_list_all_conversations_owner_join_and_q_filter(pg_client: PgClient) -> None:
     """全库列表旁路：LEFT JOIN users 取属主名（机器域=owner None）；q 过滤 title。"""
-    from bidqa.auth_core import UsersStore
+    from bidqa.auth.store import UsersStore
 
     store = UsersStore(pg_client)
     uid = store.create_user("IT-console-owner", "pw", "user")
@@ -350,7 +350,7 @@ def test_purge_empty_protection_window_and_shell_rule(pg_client: PgClient) -> No
 
 def test_reset_password_revokes_sessions(pg_client: PgClient) -> None:
     """改密吊销会话（store 层单一入口）：登录 → 改密 → 旧 token resolve 不回。"""
-    from bidqa.auth_core import UsersStore
+    from bidqa.auth.store import UsersStore
 
     store = UsersStore(pg_client)
     try:

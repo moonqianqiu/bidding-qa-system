@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 
-from bidqa.regions import province_of  # re-export 语义：地区归一入口
+from bidqa.ingest.regions import province_of  # re-export 语义：地区归一入口
 
 __all__ = ["normalize_amount", "normalize_region", "normalize_date", "province_of"]
 

@@ -16,7 +16,7 @@ from collections import defaultdict, deque
 
 from fastapi import Request
 
-from bidqa.auth_core import ROLE_GUEST
+from bidqa.auth.identity import ROLE_GUEST
 
 WINDOW_SECONDS = 60.0
 MAX_REQUESTS = 30

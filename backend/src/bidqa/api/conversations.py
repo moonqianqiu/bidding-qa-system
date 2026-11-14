@@ -14,7 +14,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from bidqa.auth_core import ROLE_ADMIN
+from bidqa.auth.identity import ROLE_ADMIN
 from bidqa.database.postgres import is_uuid
 from bidqa.errors import EC_NOT_FOUND, EC_SOURCE_DEGRADED, error_body
 from bidqa.service import build_pg

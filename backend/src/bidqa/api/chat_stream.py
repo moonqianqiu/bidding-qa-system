@@ -26,7 +26,7 @@ logger = logging.getLogger("bidqa.api.chat_stream")
 from bidqa.agent.assembly import build_done
 from bidqa.agent.loop import AgentLoop, LoopResult
 from bidqa.api.ratelimit import rate_identity
-from bidqa.auth_core import ROLE_GUEST
+from bidqa.auth.identity import ROLE_GUEST
 from bidqa.clients.llm import ChatClient
 from bidqa.clients.siliconflow import DataSourceError
 from bidqa.config import get_settings

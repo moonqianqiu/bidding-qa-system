@@ -72,7 +72,7 @@ def _req_with_identity(ident):
 
 def test_rate_identity_selects_buckets():
     """游客→独立桶（按会话 token）；user/admin→主桶（按 user_id）；无身份→旧 identity_of。"""
-    from bidqa.auth_core import Identity
+    from bidqa.auth.identity import Identity
     from bidqa.config import Settings
 
     s = Settings(_env_file=None, GUEST_RATE_LIMIT=2, USERS_ENABLED="true")
@@ -91,7 +91,7 @@ def test_rate_identity_selects_buckets():
 
 def test_guest_bucket_independent_of_main():
     """游客第 3 次请求拒绝（配额 2），主桶不受影响（docs/01 §3.5 游客独立更严配额）。"""
-    from bidqa.auth_core import Identity
+    from bidqa.auth.identity import Identity
     from bidqa.config import Settings
 
     from bidqa.api.ratelimit import rate_identity

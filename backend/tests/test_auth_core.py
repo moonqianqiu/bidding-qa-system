@@ -3,16 +3,14 @@
 
 from __future__ import annotations
 
-from bidqa.auth_core import (
+from bidqa.auth.identity import (
     MACHINE_USERNAME,
     ROLE_ADMIN,
     ROLE_GUEST,
     ROLE_USER,
     Identity,
-    hash_password,
-    mint_token,
-    verify_password,
 )
+from bidqa.auth.passwords import hash_password, mint_token, verify_password
 
 
 def test_password_hash_roundtrip() -> None:

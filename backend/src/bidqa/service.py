@@ -106,7 +106,7 @@ def build_users_store() -> "UsersStore | None":
     pg = build_pg()
     if pg is None:
         return None
-    from bidqa.auth_core import UsersStore
+    from bidqa.auth.store import UsersStore
 
     s = get_settings()
     store = UsersStore(pg)

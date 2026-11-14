@@ -99,7 +99,7 @@ def _armed(monkeypatch, settings_factory, ident):
 
 def test_scoping_isolation_through_endpoint(pg_client, settings_factory, monkeypatch) -> None:
     """普通用户 A/B 互不可见：list 过滤 + 越权 get/delete/rename 一律 404（不泄漏存在性）。"""
-    from bidqa.auth_core import Identity
+    from bidqa.auth.identity import Identity
 
     uid_a, uid_b = str(uuid.uuid4()), str(uuid.uuid4())
     ident = Identity("user", uid_a, "alice", "t-fixed")
@@ -134,7 +134,7 @@ def test_scoping_isolation_through_endpoint(pg_client, settings_factory, monkeyp
 
 def test_scoping_admin_sees_machine_domain(pg_client, settings_factory, monkeypatch) -> None:
     """人类 admin 可见本人 + 机器域（NULL）；机器主 token 仅 NULL（docs/01 §3.1）。"""
-    from bidqa.auth_core import Identity
+    from bidqa.auth.identity import Identity
     from types import SimpleNamespace
 
     import bidqa.api.middleware as mw

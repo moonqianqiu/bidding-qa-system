@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import bidqa.api.system as sys_mod
-from bidqa.auth_core import Identity
+from bidqa.auth.identity import Identity
 from bidqa.main import create_app
 
 TOKEN = "secret-token"
