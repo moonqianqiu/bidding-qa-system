@@ -9,15 +9,16 @@
 1. 读 `AGENTS.md`（硬约束 10 条 + 预算红线）→ `docs/04` §6（一次提问的代码级走读，路径已对齐 v2.0 结构）
 2. 结构速览：`docs/01` §1 分层树——**api=HTTP 适配壳、application=业务用例、工厂在各包 factory.py、组合根只有 container.build_agent_stack**；分层边界由 `tests/test_layering.py` AST 钉死（违规即红）
 3. 拉起服务：`bash deploy/start.sh` → **立刻** `curl 127.0.0.1:8000/api/health` 六组件全 `ok`
-4. 跑验证三连：`cd backend && uv run pytest -q`（435 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
+4. 跑验证三连：`cd backend && uv run pytest -q`（441 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
 
 ## 2. 质量现状（快照，接手时按 §6 复核）
 
 | 项 | 状态 | 复核命令 |
 |---|---|---|
-| 标签 | `v1.0-baseline`（旧仓基线 462a6f1 快照）→ `v2.0-refactored`（重构收口） | `git tag -l && git log --oneline -12` |
-| 后端测试 | **435 passed 全绿（含 Neo4j/PG 集成，服务需在线）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
-| 分层守卫 | `tests/test_layering.py` R1-R6 全部空集（永久护栏）+ **变异验证通过**（变异体 `rag→api` 被 R1 精确咬住） | `pytest tests/test_layering.py -q` |
+| 标签 | `v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` | `git tag -l && git log --oneline -12` |
+| 后端测试 | **441 passed 全绿（含 Neo4j/PG 集成，服务需在线）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
+| 分层守卫 | `tests/test_layering.py` **R1-R11** 全部空集（永久护栏）+ 每条规则「能红」自检 | `pytest tests/test_layering.py -q` |
+| 类型检查 | pyrefly **49**（基线 56；bad-override ×5 + missing-attribute ×3 已清零，余为 psycopg 行类型噪音） | `uv run --with pyrefly pyrefly check src` |
 | 前端类型 | 绿（`npm run build` 五路由全预渲染） | `cd frontend && npm run build` |
 | e2e 三走向 | `--mutation-check` 免费自证 PASS；真跑调主模型（付费，跑前看 §3 成本） | `bash deploy/e2e-chat.sh --mutation-check` |
 | Agent 评测 | 13/13 工具选择 1.0（快照见旧仓历史；新仓重跑见 §3 收费口径） | `uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent` |
@@ -64,7 +65,7 @@
 
 - [ ] `git status` 干净；`git log --oneline -12` 覆盖 C0-C9（基线→重构逐 commit 绿）
 - [ ] `bash deploy/start.sh` 后 `/api/health` 六组件全 ok
-- [ ] `cd backend && uv run pytest -q` → 435 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
+- [ ] `cd backend && uv run pytest -q` → 441 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
 - [ ] `cd frontend && npm run build` 绿（五路由预渲染）
 - [ ] `bash deploy/e2e-chat.sh --mutation-check` PASS（免费）；真跑三走向属付费动作（跑前告知用户）
 - [ ] `pytest tests/test_layering.py` 3 passed（分层守卫全绿；allowlist 应全空集）
