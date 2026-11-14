@@ -13,7 +13,6 @@ from bidqa.clients.siliconflow import EmbeddingClient, RerankClient
 from bidqa.clients.tavily import TavilyClient
 from bidqa.config import get_settings
 from bidqa.database.neo4j import NeoClient
-from bidqa.database.postgres import PgClient
 from bidqa.database.qdrant import QdrantRepo
 from bidqa.rag.retrieve import Retriever
 
@@ -50,19 +49,8 @@ def build_retriever() -> Retriever:
     return Retriever(build_repo(), build_embedding(), build_reranker())
 
 
-@lru_cache(maxsize=1)
-def build_pg() -> PgClient | None:
-    """PG 客户端（schema 幂等建表失败=降级 None，health 如实显示）。"""
-    s = get_settings()
-    if not s.has_postgres:
-        return None
-    client = PgClient(s.POSTGRES_HOST, s.POSTGRES_PORT, s.POSTGRES_DB,
-                      s.POSTGRES_USER, s.POSTGRES_PASSWORD)
-    try:
-        client.ensure_schema()
-    except Exception:
-        return None
-    return client
+# PG 连接/存储工厂已归 database/factory（重构 C2）——兼容再导出，C4/C5 随调用方迁移移除。
+from bidqa.database.factory import build_pg  # noqa: F401
 
 
 @lru_cache(maxsize=1)

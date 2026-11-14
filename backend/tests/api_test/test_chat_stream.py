@@ -17,7 +17,6 @@ from bidqa.api.ratelimit import SlidingWindowLimiter
 from bidqa.clients.siliconflow import DataSourceError
 from bidqa.main import create_app
 from bidqa.rag.retrieve import Hit, RetrievalResult
-from bidqa.service import build_pg
 
 
 # ── fakes ──
@@ -76,7 +75,7 @@ def patch_service(monkeypatch, chat=None, retriever=None, pg=None, web_clients=N
     monkeypatch.setattr(mod, "build_chat", lambda: chat)
     monkeypatch.setattr(mod, "build_chat_for", lambda provider: chat)
     monkeypatch.setattr(mod, "build_retriever", lambda: retriever or FakeRetriever())
-    monkeypatch.setattr(mod, "build_pg", lambda: pg)
+    monkeypatch.setattr(mod, "build_conversation_store", lambda: pg)
     monkeypatch.setattr(mod, "build_web_clients", lambda: dict(web_clients or {}))
 
 

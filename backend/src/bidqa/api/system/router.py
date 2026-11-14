@@ -19,11 +19,12 @@ from pydantic import BaseModel, Field
 
 from bidqa.api.system.providers import router as _providers_router
 from bidqa.config import get_settings
-from bidqa.database.postgres import is_uuid
+from bidqa.database.conversations import is_uuid
+from bidqa.database.factory import build_conversation_store, build_pg
 from bidqa.errors import (EC_CONFLICT, EC_NOT_FOUND, EC_SOURCE_DEGRADED,
                           EC_VALIDATION, error_body)
 from bidqa.obs.logs import log_buffer, request_stats
-from bidqa.service import build_neo, build_pg, build_repo, build_users_store
+from bidqa.service import build_neo, build_repo, build_users_store
 
 router = APIRouter()
 router.include_router(_providers_router)  # providers：纯配置只读视图（独立模块见同目录）
@@ -167,18 +168,6 @@ def _503_store() -> JSONResponse:
     )
 
 
-def _pg_or_5031() -> Any:
-    return build_pg()
-
-
-def _5031() -> JSONResponse:
-    return JSONResponse(
-        status_code=503,
-        content=error_body(EC_SOURCE_DEGRADED, "数据源降级/不可用",
-                           detail={"source": "postgres: 未配置或不可用"}),
-    )
-
-
 def _identity(request: Request) -> Any:
     return getattr(request.state, "identity", None)
 
@@ -277,6 +266,14 @@ def system_settings_guest_enabled(payload: GuestEnabledRequest) -> Any:
 
 # ══ B12 全库会话管理（独立旁路端点；聊天页可见域三元组零改动）══
 
+def _5031() -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content=error_body(EC_SOURCE_DEGRADED, "数据源降级/不可用",
+                           detail={"source": "postgres: 未配置或不可用"}),
+    )
+
+
 class PurgeRequest(BaseModel):
     dry_run: bool = True  # 先预览再删（prune --dry-run 惯例）
 
@@ -285,22 +282,22 @@ class PurgeRequest(BaseModel):
 def system_conversations(limit: int = Query(default=200, ge=1, le=500),
                          q: str = Query(default="", max_length=100)) -> Any:
     """全库列表（属主 JOIN users；q 对 title ILIKE 过滤）——admin 管理视图。"""
-    pg = _pg_or_5031()
-    if pg is None:
+    store = build_conversation_store()
+    if store is None:
         return _5031()
-    return {"conversations": pg.list_all_conversations(limit=limit, q=q.strip())}
+    return {"conversations": store.list_all_conversations(limit=limit, q=q.strip())}
 
 
 @router.delete("/api/system/conversations/{conv_id}")
 def system_conversation_delete(conv_id: str) -> Any:
     """admin 旁路删（复用 delete_conversation 无参调用=不过滤）；不存在 → 404/4041。"""
-    pg = _pg_or_5031()
-    if pg is None:
+    store = build_conversation_store()
+    if store is None:
         return _5031()
     if not is_uuid(conv_id):
         return JSONResponse(status_code=404,
                             content=error_body(EC_NOT_FOUND, "资源不存在"))
-    if not pg.delete_conversation(conv_id):
+    if not store.delete_conversation(conv_id):
         return JSONResponse(status_code=404,
                             content=error_body(EC_NOT_FOUND, "资源不存在"))
     return {"deleted": True, "id": conv_id}
@@ -310,11 +307,11 @@ def system_conversation_delete(conv_id: str) -> Any:
 def system_conversations_purge(payload: PurgeRequest) -> Any:
     """空壳清理：无 assistant 回复且超出 10 分钟保护窗（防误删刚流式完成的会话）。
     dry_run=true（默认）只预览 {count, samples≤20}；false 才删并返回 {deleted}。"""
-    pg = _pg_or_5031()
-    if pg is None:
+    store = build_conversation_store()
+    if store is None:
         return _5031()
     if payload.dry_run:
-        stats = pg.empty_conversations()
+        stats = store.empty_conversations()
         return {"dry_run": True, **stats}
-    deleted = pg.purge_empty_conversations()
+    deleted = store.purge_empty_conversations()
     return {"dry_run": False, "deleted": deleted}

@@ -1,6 +1,6 @@
 """会话与用户存储（docs/01 §3.1 用户体系段）：users/sessions/app_settings 三表访问。
 
-持 PgClient 复用其连接与 schema（schema 由 build_pg().ensure_schema() 统一执行，
+持 PgConn 复用其连接与 schema（schema 由 build_pg().ensure_schema() 统一执行，
 schema.sql 单一事实来源）；种子由 auth/factory（原 service.build_users_store）
 首次构建时调用（进程内一次）。会话过期在 resolve 时惰性剔除（顺手清理，无需后台任务）。
 """
@@ -15,7 +15,7 @@ from bidqa.auth.passwords import hash_password, mint_token, verify_password
 
 
 class UsersStore:
-    """users/sessions/app_settings 三表访问（持 PgClient，复用其连接与 schema）。
+    """users/sessions/app_settings 三表访问（持 PgConn，复用其连接与 schema）。
 
     schema 由 build_pg().ensure_schema() 统一执行（schema.sql 单一事实来源）；
     种子由 service.build_users_store 首次构建时调用（进程内一次）。

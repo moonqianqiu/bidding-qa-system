@@ -31,10 +31,11 @@ from bidqa.clients.chat_factory import build_chat_for
 from bidqa.clients.llm import ChatClient
 from bidqa.clients.siliconflow import DataSourceError
 from bidqa.config import get_settings
+from bidqa.database.factory import build_bp_repo, build_conversation_store
 from bidqa.errors import EC_CONFLICT, EC_RATE_LIMITED, EC_SOURCE_DEGRADED, error_body
 from bidqa.rag.retrieve import RetrievalResult
 from bidqa.service import (
-    build_chat, build_neo, build_pg, build_reranker, build_retriever,
+    build_chat, build_neo, build_reranker, build_retriever,
     build_web_clients,
 )
 from bidqa.clients.tavily import web_cache
@@ -128,12 +129,12 @@ def _sse_line(event: dict[str, Any]) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 
 
-def _load_history(pg: Any, conversation_id: str | None) -> tuple[str | None, list[dict], str]:
+def _load_history(store: Any, conversation_id: str | None) -> tuple[str | None, list[dict], str]:
     """加载会话（最近 N 轮 + 滚动摘要）；无 PG/无会话返回 (None, [], "")。"""
-    if not pg or not conversation_id:
+    if not store or not conversation_id:
         return conversation_id, [], ""
     try:
-        row = pg.get_conversation(conversation_id)
+        row = store.get_conversation(conversation_id)
     except Exception:
         return conversation_id, [], ""
     if not row:
@@ -144,22 +145,22 @@ def _load_history(pg: Any, conversation_id: str | None) -> tuple[str | None, lis
     return conversation_id, items, str(messages.get("summary", "") or "")
 
 
-def _persist(pg: Any, conversation_id: str | None, question: str, result: LoopResult,
+def _persist(store: Any, conversation_id: str | None, question: str, result: LoopResult,
              provider: str, prior_summary: str, user_id: str | None = None) -> str:
     """会话落库（messages JSONB 内含 schema_v）；失败静默（能力型）。
     user_id=归属（docs/01 §3.1 会话隔离）：机器主 token/legacy 为 None（机器域）。"""
-    if not pg:
+    if not store:
         return conversation_id or ""
     conv_id = conversation_id or str(uuid.uuid4())
     try:
-        row = pg.get_conversation(conv_id)
+        row = store.get_conversation(conv_id)
         items = (row.get("messages") or {}).get("items", []) if row else []
         new_items = items + [{"role": "user", "content": question},
                              {"role": "assistant", "content": result.answer}]
         title = (row or {}).get("title") or question[:30]
-        pg.upsert_conversation(conv_id, title,
-                               {"schema_v": 1, "items": new_items[-200:],
-                                "summary": prior_summary}, provider, user_id=user_id)
+        store.upsert_conversation(conv_id, title,
+                                  {"schema_v": 1, "items": new_items[-200:],
+                                   "summary": prior_summary}, provider, user_id=user_id)
         result.conversation_id = conv_id
     except Exception as exc:
         # 落库失败不再纯静默：类型+简述进日志（脱敏原则：只记结构性错误信息）
@@ -167,12 +168,12 @@ def _persist(pg: Any, conversation_id: str | None, question: str, result: LoopRe
     return conv_id
 
 
-def _compress_after_done(pg: Any, conv_id: str, chat: Any, question: str,
+def _compress_after_done(store: Any, conv_id: str, chat: Any, question: str,
                          result: LoopResult, prior_summary: str,
                          history_items: list[dict]) -> None:
     """C7 压缩：在 _result 投递之后执行（5s 限时），不拖慢收尾事件；
     失败=等同不开启（契约）。"""
-    if pg is None or chat is None:
+    if store is None or chat is None:
         return
     try:
         from bidqa.agent.compress import compress_history
@@ -181,12 +182,12 @@ def _compress_after_done(pg: Any, conv_id: str, chat: Any, question: str,
                                     {"role": "assistant", "content": result.answer}],
             prior_summary=prior_summary, conversation_id=conv_id)
         if summary:
-            row2 = pg.get_conversation(conv_id)
+            row2 = store.get_conversation(conv_id)
             items2 = (row2.get("messages") or {}).get("items", [])
             title = (row2 or {}).get("title") or question[:30]
-            pg.upsert_conversation(conv_id, title,
-                                   {"schema_v": 1, "items": items2, "summary": summary},
-                                   "")
+            store.upsert_conversation(conv_id, title,
+                                      {"schema_v": 1, "items": items2, "summary": summary},
+                                      "")
     except Exception:
         pass
 
@@ -219,14 +220,15 @@ def _worker(payload: ChatStreamRequest, queue: Queue, trace_id: str, t0: float,
     try:
         chat: ChatClient | None = build_chat_for(payload.provider)  # C8/A12 profile 路由
         retriever = build_retriever()
-        pg = build_pg()
+        store = build_conversation_store()
+        bp = build_bp_repo()
         neo = build_neo()
         web_clients = build_web_clients()
         registry = ToolRegistry()
         if retriever is not None:
             registry.register(SearchKnowledgeTool(retriever, chat))
-        if pg is not None:
-            registry.register(SearchDatabaseTool(pg))
+        if bp is not None:
+            registry.register(SearchDatabaseTool(bp))
         if neo is not None:
             registry.register(SearchGraphTool(neo))
         if web_clients:
@@ -239,7 +241,7 @@ def _worker(payload: ChatStreamRequest, queue: Queue, trace_id: str, t0: float,
             history = guest_history.load(conv_id)
             prior_summary = ""
         else:
-            conv_id, history, prior_summary = _load_history(pg, payload.conversation_id)
+            conv_id, history, prior_summary = _load_history(store, payload.conversation_id)
         loop = AgentLoop(chat, registry, _runner(), temperature=0.3)
         # 图片上下文只进模型、不落库（描述是 TTL 10min 的易逝旁路；会话存原始问题）
         question = payload.message
@@ -260,12 +262,13 @@ def _worker(payload: ChatStreamRequest, queue: Queue, trace_id: str, t0: float,
             guest_history.append(conv_id, payload.message, result.answer)
             result.conversation_id = conv_id
         else:
-            saved_id = _persist(pg, conv_id or payload.conversation_id, payload.message,
-                                result, payload.provider or "", prior_summary,
+            saved_id = _persist(store, conv_id or payload.conversation_id,
+                                payload.message, result, payload.provider or "",
+                                prior_summary,
                                 user_id=(identity.user_id if identity else None))
         queue.put(("_result", result))  # 收尾事件优先
         if not is_guest:
-            _compress_after_done(pg, saved_id, chat, payload.message, result,
+            _compress_after_done(store, saved_id, chat, payload.message, result,
                                  prior_summary, history)  # C7：5s 限时，不阻塞收尾
     except Exception as exc:
         try:

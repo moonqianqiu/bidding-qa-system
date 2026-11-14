@@ -7,7 +7,7 @@ from typing import Any
 from bidqa.tools.db_tool import SearchDatabaseTool
 
 
-class _StubPg:
+class _StubRepo:
     def __init__(self, rows: list[dict[str, Any]]):
         self._rows = rows
 
@@ -17,7 +17,7 @@ class _StubPg:
 
 def test_subject_agg_all_null_labels_yields_no_chart() -> None:
     """真实库 subject_matter 全 NULL：单桶「（未知）」≠ 有数据，不许出图。"""
-    tool = SearchDatabaseTool(_StubPg([{"label": None, "projects": 8489,
+    tool = SearchDatabaseTool(_StubRepo([{"label": None, "projects": 8489,
                                      "total_amount": 21_323_088_647}]))
     out = tool.run(tool.args_model.model_validate({"query_type": "subject_agg", "top_n": 10}))
     assert out["empty"] is True
@@ -27,7 +27,7 @@ def test_subject_agg_all_null_labels_yields_no_chart() -> None:
 
 
 def test_aggregate_with_real_labels_still_charts() -> None:
-    tool = SearchDatabaseTool(_StubPg([
+    tool = SearchDatabaseTool(_StubRepo([
         {"label": "安徽省合肥市", "projects": 3, "total_amount": 100},
         {"label": "安徽省芜湖市", "projects": 1, "total_amount": None},
     ]))

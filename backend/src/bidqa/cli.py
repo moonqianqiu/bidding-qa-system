@@ -143,11 +143,13 @@ def _subject_batch(args) -> int:
     if not args.write:
         print(f"试运行结束：映射已落盘 {out_dir / 'subject_map.json'}，未写库（加 --write 生效）")
         return 0
-    pg = build_pg()
-    if pg is None:
+    from bidqa.database.factory import build_bp_repo
+
+    repo = build_bp_repo()
+    if repo is None:
         print("PostgreSQL 未配置/不可用", file=sys.stderr)
         return 2
-    updated = pg.update_subject_matter(mapping)
+    updated = repo.update_subject_matter(mapping)
     print(f"已写回 PG：{updated} 行 subject_matter")
     return 0
 
@@ -359,15 +361,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if not report.rejected else 1
 
         if args.ingest_target == "db":
+            from bidqa.database.factory import build_bp_repo
             from bidqa.ingest.db_import import import_db
-            from bidqa.service import build_pg
 
-            pg = build_pg()
-            if pg is None:
+            repo = build_bp_repo()
+            if repo is None:
                 print("PostgreSQL 未配置/不可用", file=sys.stderr)
                 return 2
             batch_id = args.batch_id or f"db-{datetime.now():%Y%m%d-%H%M%S}"
-            result = import_db(args.input, pg, batch_id, dry_run=args.dry_run,
+            result = import_db(args.input, repo, batch_id, dry_run=args.dry_run,
                                sheet=args.sheet)
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 0

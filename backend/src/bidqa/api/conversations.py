@@ -15,18 +15,15 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from bidqa.auth.identity import ROLE_ADMIN
-from bidqa.database.postgres import is_uuid
+from bidqa.database.conversations import is_uuid
+from bidqa.database.factory import build_conversation_store, build_feedback_store
 from bidqa.errors import EC_NOT_FOUND, EC_SOURCE_DEGRADED, error_body
-from bidqa.service import build_pg
 
 router = APIRouter()
 
 
-def _pg_or_5031() -> Any:
-    pg = build_pg()
-    if pg is None:
-        return None
-    return pg
+def _store_or_5031() -> Any:
+    return build_conversation_store()
 
 
 def _5031() -> JSONResponse:
@@ -49,12 +46,12 @@ def _scope(request: Request) -> tuple[str | None, bool]:
 
 @router.get("/api/conversations")
 def list_conversations(request: Request) -> dict[str, Any]:
-    pg = _pg_or_5031()
-    if pg is None:
+    store = _store_or_5031()
+    if store is None:
         return _5031()
     viewer, machine = _scope(request)
-    return {"conversations": pg.list_conversations(viewer_user_id=viewer,
-                                                   machine_domain=machine)}
+    return {"conversations": store.list_conversations(viewer_user_id=viewer,
+                                                       machine_domain=machine)}
 
 
 @router.get("/api/conversations/{conv_id}")
@@ -62,11 +59,11 @@ def get_conversation(conv_id: str, request: Request) -> Any:
     if not is_uuid(conv_id):
         return JSONResponse(status_code=404,
                             content=error_body(EC_NOT_FOUND, "资源不存在"))
-    pg = _pg_or_5031()
-    if pg is None:
+    store = _store_or_5031()
+    if store is None:
         return _5031()
     viewer, machine = _scope(request)
-    row = pg.get_conversation(conv_id, viewer_user_id=viewer, machine_domain=machine)
+    row = store.get_conversation(conv_id, viewer_user_id=viewer, machine_domain=machine)
     if row is None:
         return JSONResponse(status_code=404,
                             content=error_body(EC_NOT_FOUND, "资源不存在"))
@@ -78,11 +75,12 @@ def delete_conversation(conv_id: str, request: Request) -> Any:
     if not is_uuid(conv_id):
         return JSONResponse(status_code=404,
                             content=error_body(EC_NOT_FOUND, "资源不存在"))
-    pg = _pg_or_5031()
-    if pg is None:
+    store = _store_or_5031()
+    if store is None:
         return _5031()
     viewer, machine = _scope(request)
-    if not pg.delete_conversation(conv_id, viewer_user_id=viewer, machine_domain=machine):
+    if not store.delete_conversation(conv_id, viewer_user_id=viewer,
+                                     machine_domain=machine):
         return JSONResponse(status_code=404,
                             content=error_body(EC_NOT_FOUND, "资源不存在"))
     return {"deleted": conv_id}
@@ -98,12 +96,12 @@ def rename_conversation(conv_id: str, payload: RenameRequest, request: Request) 
     if not is_uuid(conv_id):
         return JSONResponse(status_code=404,
                             content=error_body(EC_NOT_FOUND, "资源不存在"))
-    pg = _pg_or_5031()
-    if pg is None:
+    store = _store_or_5031()
+    if store is None:
         return _5031()
     viewer, machine = _scope(request)
-    if not pg.rename_conversation(conv_id, payload.title.strip(),
-                                  viewer_user_id=viewer, machine_domain=machine):
+    if not store.rename_conversation(conv_id, payload.title.strip(),
+                                     viewer_user_id=viewer, machine_domain=machine):
         return JSONResponse(status_code=404,
                             content=error_body(EC_NOT_FOUND, "资源不存在"))
     return {"id": conv_id, "title": payload.title.strip()}
@@ -121,13 +119,13 @@ class FeedbackRequest(BaseModel):
 
 @router.post("/api/feedback")
 def create_feedback(payload: FeedbackRequest) -> dict[str, Any]:
-    pg = _pg_or_5031()
-    if pg is None:
+    fb = build_feedback_store()
+    if fb is None:
         return _5031()
     if payload.conversation_id and not is_uuid(payload.conversation_id):
         return JSONResponse(status_code=404,
                             content=error_body(EC_NOT_FOUND, "资源不存在"))
-    feedback_id = pg.insert_feedback(
+    feedback_id = fb.insert_feedback(
         payload.conversation_id, payload.question, payload.rating,
         [{"id": s.get("id"), "title": s.get("title", "")} for s in payload.sources],
         payload.trace_id)

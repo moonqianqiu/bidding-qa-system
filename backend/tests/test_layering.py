@@ -107,10 +107,9 @@ ALLOWLIST: dict[str, set[tuple[str, str]]] = {
         ("api.ask", "service"),            # C3: application/ask + rag/clients factory
         ("api.chat_stream", "service"),    # C3: application/chat + database/rag factory
         ("api.vision", "service"),         # C3: application/vision + clients/chat_factory
-        ("api.auth", "service"),           # C4: auth/factory
-        ("api.middleware", "service"),     # C4: auth/factory
-        ("api.conversations", "service"),  # C4: database/factory（会话存储）
-        ("api.health", "service"),         # C4: database/rag factory
+        ("api.auth", "service"),             # C4: auth/factory
+        ("api.middleware", "service"),       # C4: auth/factory
+        ("api.health", "service"),           # C4: database/rag factory
         ("api.system.router", "service"),  # C4: application/admin
     },
     # 过渡：图片 ref store 归 application/vision（C3 迁移后清零）

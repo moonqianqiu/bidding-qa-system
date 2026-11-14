@@ -6,7 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from bidqa.database.postgres import QUERY_TYPES, PgClient
+from bidqa.database.bp_repo import BpRepo
+from bidqa.database.bp_schema import QUERY_TYPES
 from bidqa.tools.base import BaseTool, empty_result, tool_result
 
 
@@ -38,11 +39,11 @@ class SearchDatabaseTool(BaseTool):
                    "金额单位=元。")
     args_model = SearchDatabaseArgs
 
-    def __init__(self, pg: PgClient):
-        self.pg = pg
+    def __init__(self, repo: BpRepo):
+        self.repo = repo
 
     def run(self, args: SearchDatabaseArgs) -> dict[str, Any]:
-        rows, _sql = self.pg.query_bp(args.model_dump(exclude_none=True))
+        rows, _sql = self.repo.query_bp(args.model_dump(exclude_none=True))
         if not rows:
             return empty_result()
         if args.query_type != "detail_search" and not any(

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from bidqa.database.postgres import PgClient
+from bidqa.database.bp_repo import BpRepo
+from bidqa.database.connection import PgConn
 
 ROWS = [
     {"project_no": "IT-SM-001", "project_name": "空调采购项目", "winner": "甲公司",
@@ -21,17 +22,18 @@ ROWS = [
 ]
 
 
-def _cleanup(pg: PgClient) -> None:
+def _cleanup(pg: PgConn) -> None:
     pg.connection().execute("DELETE FROM bidding_procurement WHERE batch_id = 'it-sm'")
     pg.connection().commit()
 
 
-def test_update_subject_matter_writes_same_name_rows(pg_client: PgClient) -> None:
+def test_update_subject_matter_writes_same_name_rows(pg_client: PgConn) -> None:
     pg = pg_client
+    bp = BpRepo(pg)
     _cleanup(pg)  # 前置：清历史残留
     try:
-        pg.upsert_bp([dict(r, batch_id="it-sm") for r in ROWS], "it-sm")
-        updated = pg.update_subject_matter({"空调采购项目": "空调", "电梯采购项目": "电梯"})
+        bp.upsert_bp([dict(r, batch_id="it-sm") for r in ROWS], "it-sm")
+        updated = bp.update_subject_matter({"空调采购项目": "空调", "电梯采购项目": "电梯"})
         rows = pg.connection().execute(
             "SELECT project_no, subject_matter FROM bidding_procurement "
             "WHERE batch_id = 'it-sm' ORDER BY project_no").fetchall()
@@ -39,7 +41,7 @@ def test_update_subject_matter_writes_same_name_rows(pg_client: PgClient) -> Non
         assert {r["project_no"]: r["subject_matter"] for r in rows} == {
             "IT-SM-001": "空调", "IT-SM-002": "空调", "IT-SM-003": "电梯"}
         # 未知项目名不炸（rowcount=0），幂等重跑行数一致
-        assert pg.update_subject_matter({"不存在的项目": "x"}) == 0
-        assert pg.update_subject_matter({"空调采购项目": "空调"}) == 2
+        assert bp.update_subject_matter({"不存在的项目": "x"}) == 0
+        assert bp.update_subject_matter({"空调采购项目": "空调"}) == 2
     finally:
         _cleanup(pg)  # 收尾：不污染开发库

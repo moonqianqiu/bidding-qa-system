@@ -168,6 +168,7 @@ def patch_admin(monkeypatch, store: FakeUsersStore, pg: FakePg | None = None) ->
     monkeypatch.setattr(auth_mod, "build_users_store", lambda: store)
     monkeypatch.setattr(sys_mod, "build_users_store", lambda: store)
     monkeypatch.setattr(sys_mod, "build_pg", lambda: pg)
+    monkeypatch.setattr(sys_mod, "build_conversation_store", lambda: pg)
     monkeypatch.setattr(sys_mod, "build_repo", lambda: FakeRepo())
     monkeypatch.setattr(sys_mod, "build_neo", lambda: FakeNeo())
 

@@ -12,7 +12,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
-from bidqa.database.postgres import PgClient
+from bidqa.database.bp_repo import BpRepo
 from bidqa.ingest.normalize import normalize_amount, normalize_date, normalize_region
 
 # 中文表头 → §4.3 字段（白名单外表头忽略并警告）
@@ -86,7 +86,7 @@ def read_rows(path: str | Path, sheet: str | None = None) -> tuple[list[dict[str
     return rows, warnings
 
 
-def import_db(xlsx_path: str | Path, pg: PgClient, batch_id: str,
+def import_db(xlsx_path: str | Path, repo: BpRepo, batch_id: str,
               dry_run: bool = False, sheet: str | None = None) -> dict[str, Any]:
     rows, warnings = read_rows(xlsx_path, sheet=sheet)
     if dry_run:
@@ -96,5 +96,5 @@ def import_db(xlsx_path: str | Path, pg: PgClient, batch_id: str,
         for w in warnings:
             print("  警告:", w, file=sys.stderr)
         return {"rows": len(rows), "dry_run": True, "warnings": warnings}
-    written = pg.upsert_bp(rows, batch_id)
+    written = repo.upsert_bp(rows, batch_id)
     return {"rows": len(rows), "written": written, "warnings": warnings}

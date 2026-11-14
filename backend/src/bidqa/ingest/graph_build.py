@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from bidqa.clients.llm import ChatClient
+from bidqa.database.connection import PgConn
 from bidqa.database.neo4j import NeoClient
-from bidqa.database.postgres import PgClient
 
 MERGE_CONFIDENCE = 0.85
 REVIEW_DIR = Path("data/processed")
@@ -107,7 +107,7 @@ def _apply_mapping(rows: list[dict], mapping: dict[str, str]) -> list[dict]:
     return out
 
 
-def build_graph(pg: PgClient, neo: NeoClient, chat: ChatClient | None = None,
+def build_graph(pg: PgConn, neo: NeoClient, chat: ChatClient | None = None,
                 batch: str = "default", dry_run: bool = False,
                 clear: bool = False) -> dict[str, Any]:
     """业务库全量行 → 图谱。dry_run：打条数+抽样+不写库。"""

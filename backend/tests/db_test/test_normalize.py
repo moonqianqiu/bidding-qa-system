@@ -6,7 +6,8 @@ from datetime import date
 
 import pytest
 
-from bidqa.database.postgres import build_bp_query, escape_like
+from bidqa.database.bp_query import build_bp_query
+from bidqa.database.bp_schema import escape_like
 from bidqa.ingest.normalize import normalize_amount, normalize_date, normalize_region
 
 

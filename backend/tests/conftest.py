@@ -93,10 +93,10 @@ def settings_factory():
 @pytest.fixture(scope="session")
 def pg_client():
     """真实 PG（服务不可用则 skip，CI 兼容）；开发库按当前 schema 重建。"""
-    from bidqa.database.postgres import PgClient
+    from bidqa.database.connection import PgConn
 
     s = Settings(_env_file=".env")  # cwd=backend 时读真实 .env 的 POSTGRES_*
-    client = PgClient(s.POSTGRES_HOST, s.POSTGRES_PORT, s.POSTGRES_DB,
+    client = PgConn(s.POSTGRES_HOST, s.POSTGRES_PORT, s.POSTGRES_DB,
                       s.POSTGRES_USER, s.POSTGRES_PASSWORD)
     if not client.ping():
         pytest.skip("PostgreSQL 未运行（集成测试跳过，CI 兼容）")

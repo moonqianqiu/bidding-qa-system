@@ -2,6 +2,8 @@
 
 覆盖：ensure_schema 幂等、upsert 判重语义（同批次=更新/跨批次=并存）、
 六类查询、D3 工具端到端、conversations/feedback 存储。
+C2 起存储按职责分模块（PgConn + BpRepo/ConversationStore/FeedbackStore），
+本文件断言语义与拆分前逐字一致，仅构造方式随新形状更新。
 """
 
 from __future__ import annotations
@@ -11,20 +13,27 @@ from datetime import date
 
 import pytest
 
-from bidqa.database.postgres import PgClient
+from bidqa.database.bp_repo import BpRepo
+from bidqa.database.connection import PgConn
+from bidqa.database.conversations import ConversationStore
+from bidqa.database.feedback import FeedbackStore
 from bidqa.ingest.db_import import import_db
 from bidqa.tools.db_tool import SearchDatabaseTool
 
 
+def _stores(conn: PgConn) -> tuple[BpRepo, ConversationStore, FeedbackStore]:
+    return BpRepo(conn), ConversationStore(conn), FeedbackStore(conn)
+
+
 @pytest.fixture()
-def clean_pg(pg_client: PgClient):
+def clean_pg(pg_client: PgConn):
     yield pg_client
     pg_client.connection().execute("DELETE FROM bidding_procurement WHERE batch_id LIKE 'it-%'")
     pg_client.connection().execute("DELETE FROM feedback WHERE trace_id LIKE 'it-%'")
     pg_client.commit()
 
 
-def test_schema_idempotent(pg_client: PgClient) -> None:
+def test_schema_idempotent(pg_client: PgConn) -> None:
     pg_client.ensure_schema()
     pg_client.ensure_schema()  # 二次执行不炸 = 幂等
 
@@ -42,59 +51,59 @@ ROWS = [
 ]
 
 
-def seed(pg_client: PgClient, batch: str) -> None:
-    pg_client.upsert_bp([dict(r) for r in ROWS], batch)
-
-
-def test_upsert_and_queries(clean_pg: PgClient) -> None:
-    seed(clean_pg, "it-1")
+def test_upsert_and_queries(clean_pg: PgConn) -> None:
+    bp, _, _ = _stores(clean_pg)
+    bp.upsert_bp([dict(r) for r in ROWS], "it-1")
     # 同批次重复导入 = 更新（不产生重复行）
     updated = [dict(ROWS[0])]
     updated[0]["award_amount"] = 700_000
-    clean_pg.upsert_bp(updated, "it-1")
-    rows, _ = clean_pg.query_bp({"query_type": "detail_search", "keyword": "IT-001",
-                                 "top_n": 5})
+    bp.upsert_bp(updated, "it-1")
+    rows, _ = bp.query_bp({"query_type": "detail_search", "keyword": "IT-001",
+                           "top_n": 5})
     assert len(rows) == 1 and rows[0]["award_amount"] == 700_000
 
     # 跨批次 = 并存
-    clean_pg.upsert_bp([dict(ROWS[0])], "it-2")
-    rows, _ = clean_pg.query_bp({"query_type": "detail_search", "keyword": "IT-001",
-                                 "top_n": 5})
+    bp.upsert_bp([dict(ROWS[0])], "it-2")
+    rows, _ = bp.query_bp({"query_type": "detail_search", "keyword": "IT-001",
+                           "top_n": 5})
     assert len(rows) == 2
 
     # 聚合：标的物（金额 NULL 不计入 SUM，行数计入 COUNT）；按批次过滤——共享开发库
     # 已有真实数据（subject_matter 回填后维度 2,188 个），无过滤时种子行进不了真实 top10
     # （2026-11-08 实证：HEAD 上即挂，e022a7b 时点已潜伏；修复同 test_six_query_types 口径）
-    rows, _ = clean_pg.query_bp(
+    rows, _ = bp.query_bp(
         {"query_type": "subject_agg", "top_n": 10, "filters": {"batch_id": "it-1"}})
     soft = next(r for r in rows if r["label"] == "软件")
     assert soft["projects"] == 1 and soft["total_amount"] is None  # 取不到=NULL 非 0
 
 
-def test_six_query_types(clean_pg: PgClient) -> None:
-    seed(clean_pg, "it-1")
+def test_six_query_types(clean_pg: PgConn) -> None:
+    bp, _, _ = _stores(clean_pg)
+    bp.upsert_bp([dict(r) for r in ROWS], "it-1")
     batch = {"filters": {"batch_id": "it-1"}}  # 开发库可能已有真实数据，按批次隔离断言
     for qt, expect_label in [("region_agg", "安徽"), ("supplier_topn", "乙公司"),
                              ("purchaser_topn", None), ("time_trend", "2025-02"),
                              ("subject_agg", "电梯")]:
-        rows, _ = clean_pg.query_bp({"query_type": qt, "top_n": 10, **batch})
+        rows, _ = bp.query_bp({"query_type": qt, "top_n": 10, **batch})
         assert rows, f"{qt} 无结果"
         if expect_label:
             assert any(r["label"] == expect_label for r in rows)
 
 
-def test_region_filter_contains_city_granularity(clean_pg: PgClient) -> None:
+def test_region_filter_contains_city_granularity(clean_pg: PgConn) -> None:
     """真实库 region 是省+市（安徽省合肥市），按省过滤必须命中（包含匹配）。"""
-    clean_pg.upsert_bp([{"project_no": "IT-R1", "project_name": "地区过滤验证",
-                         "region": "安徽省合肥市", "award_amount": 100}], "it-r")
+    bp, _, _ = _stores(clean_pg)
+    bp.upsert_bp([{"project_no": "IT-R1", "project_name": "地区过滤验证",
+                   "region": "安徽省合肥市", "award_amount": 100}], "it-r")
     for filters in ({"地区": "安徽省"}, {"region": "合肥"}, {"省份": "安徽"}):
-        rows, _ = clean_pg.query_bp({"query_type": "region_agg", "filters": filters, "top_n": 10})
+        rows, _ = bp.query_bp({"query_type": "region_agg", "filters": filters, "top_n": 10})
         assert "安徽省合肥市" in [r["label"] for r in rows], filters
 
 
-def test_d3_tool_end_to_end(clean_pg: PgClient) -> None:
-    seed(clean_pg, "it-1")
-    tool = SearchDatabaseTool(clean_pg)
+def test_d3_tool_end_to_end(clean_pg: PgConn) -> None:
+    bp, _, _ = _stores(clean_pg)
+    bp.upsert_bp([dict(r) for r in ROWS], "it-1")
+    tool = SearchDatabaseTool(bp)
     out = tool.run(tool.args_model.model_validate(
         {"query_type": "supplier_topn", "top_n": 5,
          "filters": {"batch_id": "it-1"}}))  # 开发库有真实数据，按批次隔离
@@ -113,10 +122,11 @@ def test_d3_tool_end_to_end(clean_pg: PgClient) -> None:
     assert empty["empty"] is True and "放宽限定条件" in empty["text"]
 
 
-def test_excel_import_dry_run(clean_pg: PgClient, tmp_path) -> None:
+def test_excel_import_dry_run(clean_pg: PgConn, tmp_path) -> None:
     """F6 统一试运行约定：--dry-run 打条数+抽样+不写库。"""
     from openpyxl import Workbook
 
+    bp, _, _ = _stores(clean_pg)
     wb = Workbook()
     ws = wb.active
     ws.append(["项目编号", "项目名称", "中标人", "中标金额", "地区", "发布时间"])
@@ -126,62 +136,64 @@ def test_excel_import_dry_run(clean_pg: PgClient, tmp_path) -> None:
     path = tmp_path / "sample.xlsx"
     wb.save(path)
 
-    result = import_db(path, clean_pg, batch_id="it-dry", dry_run=True)
+    result = import_db(path, bp, batch_id="it-dry", dry_run=True)
     assert result["dry_run"] is True and result["rows"] == 2
-    rows, _ = clean_pg.query_bp({"query_type": "detail_search", "keyword": "IT-101"})
+    rows, _ = bp.query_bp({"query_type": "detail_search", "keyword": "IT-101"})
     assert rows == []  # dry-run 不写库
 
-    result = import_db(path, clean_pg, batch_id="it-dry")
+    result = import_db(path, bp, batch_id="it-dry")
     assert result["written"] == 2
-    rows, _ = clean_pg.query_bp({"query_type": "detail_search", "keyword": "IT-101"})
+    rows, _ = bp.query_bp({"query_type": "detail_search", "keyword": "IT-101"})
     assert rows[0]["award_amount"] == 660_000  # 「66万」归一
     assert rows[0]["region"] == "安徽"          # 地区归一
 
 
-def test_conversations_and_feedback(clean_pg: PgClient) -> None:
+def test_conversations_and_feedback(clean_pg: PgConn) -> None:
+    _, convs, fb = _stores(clean_pg)
     conv_id = str(uuid.uuid4())
-    clean_pg.upsert_conversation(conv_id, "测试会话",
-                                 {"schema_v": 1, "items": [{"role": "user", "content": "hi"}]})
-    got = clean_pg.get_conversation(conv_id)
+    convs.upsert_conversation(conv_id, "测试会话",
+                              {"schema_v": 1, "items": [{"role": "user", "content": "hi"}]})
+    got = convs.get_conversation(conv_id)
     assert got["title"] == "测试会话" and got["messages"]["schema_v"] == 1
-    assert conv_id in [c["id"] for c in clean_pg.list_conversations()]
-    fid = clean_pg.insert_feedback(conv_id, "空调采购有哪些？", "down",
-                                   sources=[{"id": "chunk-1"}], trace_id="it-fb-1")
+    assert conv_id in [c["id"] for c in convs.list_conversations()]
+    fid = fb.insert_feedback(conv_id, "空调采购有哪些？", "down",
+                             sources=[{"id": "chunk-1"}], trace_id="it-fb-1")
     assert fid > 0
     with pytest.raises(ValueError):
-        clean_pg.insert_feedback(conv_id, "q", "middle", sources=[])
-    clean_pg.delete_conversation(conv_id)
-    assert clean_pg.get_conversation(conv_id) is None
+        fb.insert_feedback(conv_id, "q", "middle", sources=[])
+    convs.delete_conversation(conv_id)
+    assert convs.get_conversation(conv_id) is None
 
 
 # ── 反向匹配兜底（参考吸收 #4b：正向落空 + 关键词≥3 字 → 关键词包含字段值）──
 # 注意：跑在真实开发库上（8,489 行），断言一律用成员包含，不假设表里只有测试行。
-def test_query_bp_reverse_matching(clean_pg: PgClient) -> None:
+def test_query_bp_reverse_matching(clean_pg: PgConn) -> None:
+    bp, _, _ = _stores(clean_pg)
     rows = [
         {"project_no": "IT-RM-001", "project_name": "空调采购项目", "winner": "甲公司",
          "award_amount": 100, "region": "安徽", "publish_date": date(2025, 1, 1)},
         {"project_no": "IT-RM-002", "project_name": "电梯采购项目", "winner": "乙公司",
          "award_amount": 200, "region": "芜湖", "publish_date": date(2025, 1, 2)},
     ]
-    clean_pg.upsert_bp([dict(r, batch_id="it-rm") for r in rows], "it-rm")
+    bp.upsert_bp([dict(r, batch_id="it-rm") for r in rows], "it-rm")
     # 关键词是实际名称的超集（带「及监理服务招标公告」后缀）→ 正向 0 行，反向命中
-    got, sql = clean_pg.query_bp(
+    got, sql = bp.query_bp(
         {"query_type": "detail_search", "keyword": "空调采购项目及监理服务招标公告"})
     assert "IT-RM-001" in [r["project_no"] for r in got]
     assert "ILIKE" in sql  # 返回的 sql 是实际生效的反向变体
     # 反向变体里 filters 原样保留：region 过滤芜湖 → 测试行（region 安徽）被筛掉
-    got2, _ = clean_pg.query_bp({"query_type": "detail_search",
-                                 "keyword": "空调采购项目及监理服务招标公告",
-                                 "filters": {"region": "芜湖"}})
+    got2, _ = bp.query_bp({"query_type": "detail_search",
+                           "keyword": "空调采购项目及监理服务招标公告",
+                           "filters": {"region": "芜湖"}})
     assert "IT-RM-001" not in [r["project_no"] for r in got2]
     # 正向直接命中时不触发反向（sql 无 ILIKE）
-    got3, sql3 = clean_pg.query_bp({"query_type": "detail_search", "keyword": "电梯"})
+    got3, sql3 = bp.query_bp({"query_type": "detail_search", "keyword": "电梯"})
     assert "IT-RM-002" in [r["project_no"] for r in got3]
     assert "ILIKE" not in sql3
 
 
 # ── 用户体系（docs/01 §3.1）：UsersStore 真实 PG 集成；IT-auth 前缀 try/finally 清理 ──
-def test_users_store_seed_login_resolve_roundtrip(pg_client: PgClient) -> None:
+def test_users_store_seed_login_resolve_roundtrip(pg_client: PgConn) -> None:
     """空表种子幂等 → create_user → login 正/误 → resolve → disable 即刻失效 → logout。"""
     from bidqa.auth.store import UsersStore
 
@@ -219,11 +231,12 @@ def test_users_store_seed_login_resolve_roundtrip(pg_client: PgClient) -> None:
         pg_client.commit()
 
 
-def test_guest_toggle_and_visibility(pg_client: PgClient) -> None:
+def test_guest_toggle_and_visibility(pg_client: PgConn) -> None:
     """游客开关运行时切换 + 会话可见域（user 仅本人 / admin 含机器域 / 机器仅 NULL）。"""
     from bidqa.auth.store import UsersStore
 
     store = UsersStore(pg_client)
+    convs = ConversationStore(pg_client)
     try:
         store.set_guest_enabled(False)
         assert store.login_guest(1) is None  # 关=不可进
@@ -239,27 +252,27 @@ def test_guest_toggle_and_visibility(pg_client: PgClient) -> None:
         mine, other, machine = (str(_uuid.uuid4()) for _ in range(3))
         uid = store.create_user("IT-auth-bob", "pw", "user")
         admin_uid = store.create_user("IT-auth-root", "pw", "admin")
-        pg_client.upsert_conversation(mine, "mine", {"schema_v": 1, "items": []},
-                                      user_id=uid)
-        pg_client.upsert_conversation(other, "other", {"schema_v": 1, "items": []},
-                                      user_id=admin_uid)
-        pg_client.upsert_conversation(machine, "machine", {"schema_v": 1, "items": []})
+        convs.upsert_conversation(mine, "mine", {"schema_v": 1, "items": []},
+                                  user_id=uid)
+        convs.upsert_conversation(other, "other", {"schema_v": 1, "items": []},
+                                  user_id=admin_uid)
+        convs.upsert_conversation(machine, "machine", {"schema_v": 1, "items": []})
 
         assert store.reset_password("IT-auth-bob", "pw2") is not None  # 新契约：成功=吊销会话数
-        got = [c["id"] for c in pg_client.list_conversations(
+        got = [c["id"] for c in convs.list_conversations(
             viewer_user_id=uid, machine_domain=False)]
         assert mine in got and other not in got and machine not in got
-        got_admin = [c["id"] for c in pg_client.list_conversations(
+        got_admin = [c["id"] for c in convs.list_conversations(
             viewer_user_id=admin_uid, machine_domain=True)]
         assert {other, machine} <= set(got_admin)  # admin=本人 + 机器域
         assert mine not in got_admin  # 普通用户的会话对 admin 不可见（隔离）
-        got_machine = [c["id"] for c in pg_client.list_conversations(
+        got_machine = [c["id"] for c in convs.list_conversations(
             viewer_user_id=None, machine_domain=True)]
         assert machine in got_machine and mine not in got_machine
-        assert pg_client.get_conversation(other, viewer_user_id=uid,
-                                          machine_domain=False) is None  # 越权=不可见
-        assert pg_client.delete_conversation(other, viewer_user_id=uid,
-                                             machine_domain=False) is False
+        assert convs.get_conversation(other, viewer_user_id=uid,
+                                      machine_domain=False) is None  # 越权=不可见
+        assert convs.delete_conversation(other, viewer_user_id=uid,
+                                         machine_domain=False) is False
     finally:
         conn = pg_client.connection()
         conn.execute("DELETE FROM sessions WHERE user_id IN "
@@ -273,20 +286,21 @@ def test_guest_toggle_and_visibility(pg_client: PgClient) -> None:
 
 
 # ── B12 控制台全库会话管理（真实 PG 集成；IT-console- 前缀 try/finally 清理）──
-def test_list_all_conversations_owner_join_and_q_filter(pg_client: PgClient) -> None:
+def test_list_all_conversations_owner_join_and_q_filter(pg_client: PgConn) -> None:
     """全库列表旁路：LEFT JOIN users 取属主名（机器域=owner None）；q 过滤 title。"""
     from bidqa.auth.store import UsersStore
 
     store = UsersStore(pg_client)
+    convs = ConversationStore(pg_client)
     uid = store.create_user("IT-console-owner", "pw", "user")
     ids = {k: str(uuid.uuid4()) for k in ("bobs", "machine")}
     try:
-        pg_client.upsert_conversation(ids["bobs"], "IT-console-bobs问答",
-                                      {"schema_v": 1, "items": [{"role": "user", "content": "q"}]},
-                                      user_id=uid)
-        pg_client.upsert_conversation(ids["machine"], "IT-console-机器域",
-                                      {"schema_v": 1, "items": [{"role": "user", "content": "q"}]})
-        rows = pg_client.list_all_conversations(limit=500)
+        convs.upsert_conversation(ids["bobs"], "IT-console-bobs问答",
+                                  {"schema_v": 1, "items": [{"role": "user", "content": "q"}]},
+                                  user_id=uid)
+        convs.upsert_conversation(ids["machine"], "IT-console-机器域",
+                                  {"schema_v": 1, "items": [{"role": "user", "content": "q"}]})
+        rows = convs.list_all_conversations(limit=500)
         by_id = {r["id"]: r for r in rows}
         assert by_id[ids["bobs"]]["owner"] == "IT-console-owner"
         assert by_id[ids["bobs"]]["user_id"] == uid
@@ -294,10 +308,10 @@ def test_list_all_conversations_owner_join_and_q_filter(pg_client: PgClient) -> 
             by_id[ids["machine"]]["user_id"] is None  # 机器域
         assert by_id[ids["bobs"]]["has_reply"] is False  # 无 assistant 回复
 
-        hit = [r["id"] for r in pg_client.list_all_conversations(limit=500, q="bobs")]
+        hit = [r["id"] for r in convs.list_all_conversations(limit=500, q="bobs")]
         assert ids["bobs"] in hit and ids["machine"] not in hit
-        miss = [r["id"] for r in pg_client.list_all_conversations(limit=500,
-                                                                  q="不存在的标题")]
+        miss = [r["id"] for r in convs.list_all_conversations(limit=500,
+                                                              q="不存在的标题")]
         assert ids["bobs"] not in miss
     finally:
         conn = pg_client.connection()
@@ -308,47 +322,48 @@ def test_list_all_conversations_owner_join_and_q_filter(pg_client: PgClient) -> 
         pg_client.commit()
 
 
-def test_purge_empty_protection_window_and_shell_rule(pg_client: PgClient) -> None:
+def test_purge_empty_protection_window_and_shell_rule(pg_client: PgConn) -> None:
     """空壳判定（无 assistant 回复）+ 10 分钟保护窗：刚更新过的空壳不被盘点/清删。"""
+    convs = ConversationStore(pg_client)
     fresh, aged, with_reply = (str(uuid.uuid4()) for _ in range(3))
     try:
-        pg_client.upsert_conversation(fresh, "IT-console-新鲜空壳",
-                                      {"schema_v": 1,
-                                       "items": [{"role": "user", "content": "q"}]})
-        pg_client.upsert_conversation(aged, "IT-console-陈年空壳",
-                                      {"schema_v": 1, "items": []})
-        pg_client.upsert_conversation(with_reply, "IT-console-有回复",
-                                      {"schema_v": 1,
-                                       "items": [{"role": "user", "content": "q"},
-                                                 {"role": "assistant", "content": "a"}]})
+        convs.upsert_conversation(fresh, "IT-console-新鲜空壳",
+                                  {"schema_v": 1,
+                                   "items": [{"role": "user", "content": "q"}]})
+        convs.upsert_conversation(aged, "IT-console-陈年空壳",
+                                  {"schema_v": 1, "items": []})
+        convs.upsert_conversation(with_reply, "IT-console-有回复",
+                                  {"schema_v": 1,
+                                   "items": [{"role": "user", "content": "q"},
+                                             {"role": "assistant", "content": "a"}]})
         # 把「陈年空壳」的 updated_at 拨回 11 分钟前（保护窗外）
         pg_client.connection().execute(
             "UPDATE conversations SET updated_at = now() - interval '11 minutes' "
             "WHERE id = %s", (aged,))
 
-        stats = pg_client.empty_conversations()
+        stats = convs.empty_conversations()
         assert "IT-console-陈年空壳" in stats["samples"] and stats["count"] >= 1
         # 单行条件直查（判定矩阵精确断言）
         titles = [r["title"] for r in pg_client.connection().execute(
             "SELECT title FROM conversations WHERE "
-            f"{PgClient._empty_shell_cond()} AND updated_at < "
+            f"{ConversationStore._empty_shell_cond()} AND updated_at < "
             "now() - make_interval(mins => 10)").fetchall()]
         assert "IT-console-陈年空壳" in titles
         assert "IT-console-新鲜空壳" not in titles  # 保护窗内不动
         assert "IT-console-有回复" not in titles  # 有 assistant 回复不算空壳
 
-        deleted = pg_client.purge_empty_conversations()
+        deleted = convs.purge_empty_conversations()
         assert deleted >= 1
-        assert pg_client.get_conversation(aged) is None
-        assert pg_client.get_conversation(fresh) is not None  # 保护窗内幸存
-        assert pg_client.get_conversation(with_reply) is not None  # 有回复幸存
+        assert convs.get_conversation(aged) is None
+        assert convs.get_conversation(fresh) is not None  # 保护窗内幸存
+        assert convs.get_conversation(with_reply) is not None  # 有回复幸存
     finally:
         conn = pg_client.connection()
         conn.execute("DELETE FROM conversations WHERE title LIKE 'IT-console-%'")
         pg_client.commit()
 
 
-def test_reset_password_revokes_sessions(pg_client: PgClient) -> None:
+def test_reset_password_revokes_sessions(pg_client: PgConn) -> None:
     """改密吊销会话（store 层单一入口）：登录 → 改密 → 旧 token resolve 不回。"""
     from bidqa.auth.store import UsersStore
 
