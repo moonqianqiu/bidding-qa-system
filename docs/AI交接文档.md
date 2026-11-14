@@ -21,6 +21,7 @@
 | 前端类型 | 绿（`npm run build` 五路由全预渲染） | `cd frontend && npm run build` |
 | e2e 三走向 | `--mutation-check` 免费自证 PASS；真跑调主模型（付费，跑前看 §3 成本） | `bash deploy/e2e-chat.sh --mutation-check` |
 | Agent 评测 | 13/13 工具选择 1.0（快照见旧仓历史；新仓重跑见 §3 收费口径） | `uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent` |
+| 图谱归一 | v2.1 完成：curated 映射 **9 项合并**（Purchaser 3504→3495，其余五类不变）；合并实体项目数守恒 PASS；分支/校区/附属误并候选全部未合并 | `python ../data/run/kg_acceptance.py` |
 | 产品定位 | **练习版**（老师评估 + 甲方验收双门槛），PRD 逐项对照 = docs/03 附录B | —— |
 | 旧仓 | `D:/.../bidding-qa-system` **冻结存档**（原地冻结+README 退役声明；数据副本保留），哈希只对应旧历史 | — |
 
@@ -30,7 +31,6 @@
 
 | 项 | 性质 | 说明 |
 |---|---|---|
-| 图谱实体归一 | P0 数据质量（v2.1 进行中） | 全量 dry-run 已完成：**159 批 / 0 失败**，自动合并 3 项（括号别名/公司后缀），复核 **28 项**（23 项被确定性闸门拦下 + 5 项低置信，含分公司/校区/附属误并候选）。产物在 `data/processed/graph_alias_mapping_default.json` + `graph_merge_review_default.csv`；待用户勾选复核清单后 `--mapping-file ... --clear` 重建（零模型调用）。 |
 | CI / 私有远端 | P0 工程化 | 新仓 `git remote -v` 为空——建私有库 `git remote add origin <url> && git push origin main --tags` |
 | `detail_search` 金额排序 | 功能排期 | 查询类型白名单 + order_by 列白名单 + 工具描述更新；**重构完成后另立一轮**（不在重构 commit 混功能） |
 | 离群值溯源 | 数据排查 | 66 亿（涡阳 BZGY2023CG141）/ 23.7 亿 全局头部可疑值，源 xlsx 不可考——需与甲方核对源表 |
@@ -48,7 +48,7 @@
   `CHAT_MAX_TOKENS`=8192（思考型上游先烧 reasoning，预算不足正文空）；`USERS_ENABLED`=true（admin/admin123 种子，**建议改密**）。
   配置语义以 `docs/01` §5 为准
 - **服务**：8000 后端 / 3000 前端 dev / 5432 PG / 6333 Qdrant / 7474+7687 Neo4j（当前从**新仓**跑：C9 已切换）
-- **数据规模**：PG 8,489 行样例中标数据（subject_matter 全量回填）、Neo4j 六类 18,528 节点、FAQ 75 向量——与 v1.0 完全一致（数据复制非重灌）
+- **数据规模**：PG 8,489 行样例中标数据（subject_matter 全量回填）、Neo4j 六类 **18,519 节点**（v2.1 归一后 Purchaser 3495，其余五类同 v1.0）、FAQ 75 向量
 - **数据位置**：`data/db/`（库文件）· `data/run/`（日志/pid）· `backend/eval/results/`（快照+判分缓存，**gitignore**）· `deploy/diagnosis/`（机器级排障归档）
 - **前端状态**：localStorage `bidqa.theme/lang/provider/token/user`；会话服务端主（conversations.user_id 归属）
 - **结构地图**：`docs/01` §1 分层树 + `docs/04` §8 代码地图（v2.0 已对齐；旧路径 chat_stream.py/auth_core.py/service.py/postgres.py 均已不存在）
