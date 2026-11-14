@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from bidqa.agent.loop import LoopResult
 from bidqa.agent.prompts import build_rag_direct_messages
-from bidqa.application.vision import image_context_block
+from bidqa.application.image.refs import image_context_block
 from bidqa.clients.chat_factory import build_chat_for
 from bidqa.clients.siliconflow import DataSourceError
 from bidqa.rag.factory import build_retriever

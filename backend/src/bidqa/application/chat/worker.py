@@ -17,7 +17,7 @@ from bidqa.application.chat.degrade import direct_rag_answer
 from bidqa.application.chat.history import (
     defer_compress, guest_history, load_history, persist_result,
 )
-from bidqa.application.vision import image_context_block
+from bidqa.application.image.refs import image_context_block
 from bidqa.clients.chat_factory import build_chat_for
 from bidqa.clients.siliconflow import DataSourceError
 from bidqa.database.factory import build_bp_repo, build_conversation_store, build_neo

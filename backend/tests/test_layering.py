@@ -109,8 +109,8 @@ def _prefix_matcher(pkg: str) -> Callable[[str], str | None]:
 ALLOWLIST: dict[str, set[tuple[str, str]]] = {
     # bidqa.service 组合根已退役（C5 删除）；规则保留为永久护栏防其借尸还魂
     "R6-api不得import组合根service": set(),  # C4：api→service 全部清零（各归窄工厂）
-    # 过渡：图片 ref store 归 application/vision（C3 迁移后清零）
-    "R5-chat不得依赖api.vision": set(),  # C3 归 application/vision 后清零——空集存档
+    # 过渡：图片 ref store 归 application/image.refs（C3 迁移清零，v2.3 收拢成包）
+    "R5-chat不得依赖api.vision": set(),  # C3 归 application 层后清零——空集存档
     # 业务路由 import 观测路由（note_request）：C1 pilot 已收口至 obs——空集存档
     "R4-业务路由不得import观测路由": set(),
     # 业务层反向依赖 HTTP/CLI/组合根：现状为零违规——永久护栏

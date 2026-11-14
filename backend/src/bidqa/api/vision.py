@@ -1,6 +1,6 @@
 """POST /api/vision（docs/01 §3.1；图片解析 → image_ref）——HTTP 适配层。
 
-业务用例在 application/vision（RefStore/describe_image，重构 C4 下沉）；本模块
+业务用例在 application/image（RefStore/解析通道，C4 下沉、v2.3 收拢成包）；本模块
 只做限流/体积与 base64 校验/5031 映射。校验次序：传输层错误优先于能力校验
 （413 → 400 → 5031）。聊天端点只收 image_refs（禁止 base64 直传聊天端点）。
 """
@@ -16,7 +16,8 @@ from pydantic import BaseModel, Field
 
 from bidqa.api.deps import degraded_503, rate_limited_429
 from bidqa.api.ratelimit import rate_identity
-from bidqa.application.vision import VisionUnavailable, describe_image, get_ref_store
+from bidqa.application.image.qwen import VisionUnavailable, describe_image
+from bidqa.application.image.refs import get_ref_store
 from bidqa.config import get_settings
 from bidqa.errors import EC_PAYLOAD_TOO_LARGE, error_body
 
