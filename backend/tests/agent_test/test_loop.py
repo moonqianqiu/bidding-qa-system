@@ -98,12 +98,10 @@ class SlowTool(BaseTool[SearchArgs]):
         return tool_result(text="slow done")
 
 
-def make_registry(with_slow: bool = False) -> ToolRegistry:
+def make_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(FakeSearchTool())
     reg.register(AskClarificationTool())
-    if with_slow:
-        reg.register(SlowTool())
     return reg
 
 
@@ -121,7 +119,7 @@ class Recorder:
 # ── C3 基本路径 ──
 def test_direct_answer_no_tools() -> None:
     chat = FakeChat(tools_script=[text_msg("知识库未包含相关内容。")])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     rec = Recorder()
     r = loop.run("招标公告在哪里查看？", on_event=rec)
     assert r.answer == "知识库未包含相关内容。"
@@ -135,7 +133,7 @@ def test_tool_round_then_answer() -> None:
         tool_msg("search_knowledge", {"query": "单一来源"}),
         text_msg("依据材料[1]：可以采用单一来源。"),
     ])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run("单一来源采购适用条件？")
     assert r.tool_called and r.first_tool == "search_knowledge"
     assert r.tool_trace == [[{"name": "search_knowledge", "arguments": {"query": "单一来源"}}]]
@@ -151,7 +149,7 @@ def test_cap_forced_finish() -> None:
     script = [tool_msg("search_knowledge", {"query": f"q{i}"}, call_id=f"c{i}")
               for i in range(MAX_ROUNDS)]
     chat = FakeChat(tools_script=script, plain_script=["基于已有结果直接作答：材料见[1]。"])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run("不限定的数字问题有多少？")  # 有澄清工具与判据不触发：问题含限定？——保证走普通路径
     assert r.hit_cap is True and r.rounds == MAX_ROUNDS
     assert r.answer.startswith("基于已有结果")
@@ -161,11 +159,16 @@ def test_cap_forced_finish() -> None:
 
 def test_timeout_result_backfilled_as_tool_message() -> None:
     chat = FakeChat(tools_script=[
-        tool_msg("slow_tool", {"query": "x"}, call_id="cslow"),
+        tool_msg("search_knowledge", {"query": "x"}, call_id="cslow"),
         text_msg("工具超时，据已有信息回答。"),
     ])
-    reg = make_registry(with_slow=True)
-    loop = AgentLoop(chat, reg, ToolRunner(reg, batch_timeout=0.2))
+    reg = ToolRegistry()
+
+    class SlowSearch(SlowTool):
+        name = "search_knowledge"  # 执行期=挂载子集（P1-9 收口）：假名工具不在挂载表永不执行
+
+    reg.register(SlowSearch())
+    loop = AgentLoop(chat, reg, ToolRunner(batch_timeout=0.2))
     r = loop.run("空调采购有哪些？")
     assert r.degraded and any("timeout" in d for d in r.degraded)
     tool_messages = [m for m in chat.calls[1]["messages"] if m["role"] == "tool"]
@@ -177,7 +180,7 @@ def test_timeout_result_backfilled_as_tool_message() -> None:
 def test_clarify_gate_triggers_deterministically() -> None:
     chat = FakeChat(tools_script=[tool_msg("ask_clarification",
                                            {"question_for_user": "请补充地区与时间范围"})])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     rec = Recorder()
     r = loop.run("中标金额总共多少？", on_event=rec)
     assert r.clarify is True
@@ -190,7 +193,7 @@ def test_clarify_gate_triggers_deterministically() -> None:
 def test_clarify_fallback_when_model_ignores() -> None:
     """模型不配合（直接回答文本）→ 固定话术兜底（100% 触发保证）。"""
     chat = FakeChat(tools_script=[text_msg("我觉得是 42。")])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run("中标金额总共多少？")
     assert r.clarify is True
     assert "请补充" in r.answer
@@ -201,7 +204,7 @@ def test_clarify_not_triggered_with_qualifier() -> None:
         tool_msg("search_knowledge", {"query": "空调"}),
         text_msg("依据[1]回答。"),
     ])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run("空调采购的主要供应商有哪些？")
     assert r.clarify is False and r.tool_called is True
 
@@ -210,7 +213,7 @@ def test_clarify_not_triggered_with_qualifier() -> None:
 def test_leak_reset_and_regenerate() -> None:
     chat = FakeChat(tools_script=[text_msg("先调用search_knowledge({'query':'x'})再回答")],
                     plain_script=["依据材料[1]，答案是 A。"])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     rec = Recorder()
     r = loop.run("空调采购有哪些？", on_event=rec)
     assert r.answer == "依据材料[1]，答案是 A。"
@@ -224,7 +227,7 @@ def test_leak_inline_call_executed_and_loop_continues() -> None:
         text_msg("让我调用search_knowledge({\"query\": \"空调\"})查证"),
         text_msg("依据[1]：空调采购共 12 个项目。"),
     ])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     rec = Recorder()
     r = loop.run("空调采购有哪些？", on_event=rec)
     assert r.answer.startswith("依据[1]")
@@ -234,7 +237,7 @@ def test_leak_inline_call_executed_and_loop_continues() -> None:
 def test_leak_sanitized_when_regeneration_still_leaks() -> None:
     chat = FakeChat(tools_script=[text_msg('{"tool_calls": [{"name": "x"}]}')],
                     plain_script=['{"tool_calls": [{"name": "search_knowledge"}]} 答案'])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run("空调采购有哪些？")
     assert "tool_calls" not in r.answer
     assert any(d == "leak_sanitized" for d in r.degraded)
@@ -245,7 +248,7 @@ def test_thinking_stream_events_ordered() -> None:
     chat = FakeChat(tools_script=[text_msg("草稿：答案是 A")],
                     thinking_script=[("thinking", "思考：需要核对材料"),
                                      ("content", "依据材料[1]，答案是 A。")])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     rec = Recorder()
     r = loop.run("空调采购有哪些？", thinking=True, thinking_model="m-think", on_event=rec)
     assert r.answer == "依据材料[1]，答案是 A。"
@@ -257,7 +260,7 @@ def test_thinking_stream_events_ordered() -> None:
 def test_thinking_body_fallback_when_content_empty() -> None:
     chat = FakeChat(tools_script=[text_msg("草稿")],
                     thinking_script=[("thinking", "只有思考流")])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run("空调采购有哪些？", thinking=True, thinking_model="m-think")
     assert r.answer == "只有思考流"
     assert any(d == "thinking_as_body" for d in r.degraded)
@@ -266,7 +269,7 @@ def test_thinking_body_fallback_when_content_empty() -> None:
 def test_empty_model_output_gets_honest_fallback() -> None:
     """模型返回空正文且无工具调用：不给空气泡（2026-11-02 现场复现，耗时 100s+ 后正文为空）。"""
     chat = FakeChat(tools_script=[text_msg("")], plain_script=["", ""])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     rec = Recorder()
     r = loop.run("安徽省各市有多少项目？", on_event=rec)
     assert r.answer.strip()                     # 有可见文案
@@ -281,7 +284,7 @@ def test_empty_final_round_retries_once_and_recovers() -> None:
         tool_msg("search_knowledge", {"query": "空调"}),
         text_msg(""),  # 最终生成轮空正文
     ], plain_script=["依据材料[1]：空调供应商共 3 家。"])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     rec = Recorder()
     r = loop.run("空调供应商有哪些？", on_event=rec)
     assert r.answer == "依据材料[1]：空调供应商共 3 家。"
@@ -297,7 +300,7 @@ def test_empty_final_round_retry_leak_sanitized() -> None:
     """补发文本同样过 C4 泄漏闸：仍泄漏 → 净化保底（剥泄漏模式，与既有 sanitize 契约一致）。"""
     chat = FakeChat(tools_script=[text_msg("")],
                     plain_script=["调用search_knowledge({'query':'x'})后作答：答案是 A"])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run("空调采购有哪些？")
     assert "调用search_knowledge(" not in r.answer
     assert any(d == "leak_sanitized" for d in r.degraded)
@@ -306,7 +309,7 @@ def test_empty_final_round_retry_leak_sanitized() -> None:
 def test_empty_final_round_retry_still_empty_falls_back() -> None:
     """补发仍空 → 诚实文案兜底（原行为）。"""
     chat = FakeChat(tools_script=[text_msg("")], plain_script=["", ""])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run("空调供应商有哪些？")
     assert r.answer == EMPTY_ANSWER_TEXT_EN or "本次没有拿到模型回答" in r.answer
     assert "empty_answer" in r.degraded
@@ -316,12 +319,12 @@ def test_empty_final_round_retry_still_empty_falls_back() -> None:
 def test_english_lang_injects_language_section() -> None:
     """lang=en → system prompt 带语言节；zh（默认）不带（行为不变）。"""
     chat = FakeChat(tools_script=[text_msg("Answer [1].")])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     loop.run("空调采购项目有哪些？", lang="en")  # 有标的物限定 → 直接作答
     assert "[语言]" in chat.calls[0]["messages"][0]["content"]
 
     chat2 = FakeChat(tools_script=[text_msg("中文回答 [1]。")])
-    loop2 = AgentLoop(chat2, make_registry(), ToolRunner(make_registry()))
+    loop2 = AgentLoop(chat2, make_registry(), ToolRunner())
     loop2.run("空调采购项目有哪些？")
     assert "[语言]" not in chat2.calls[0]["messages"][0]["content"]
 
@@ -329,7 +332,7 @@ def test_english_lang_injects_language_section() -> None:
 def test_english_clarify_question_when_lang_en() -> None:
     """lang=en + 无限定数字题 → 澄清话术英文（模型不理会时兜底话术也要英文）。"""
     chat = FakeChat(tools_script=[{}])  # 模型不调 ask_clarification → 兜底
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run("有多少个中标项目？", lang="en")
     assert r.clarify is True
     assert r.answer.startswith("To answer accurately")
@@ -339,7 +342,7 @@ def test_english_clarify_question_when_lang_en() -> None:
 def test_english_empty_answer_fallback() -> None:
     """lang=en + 模型空正文 → 空答案兜底文案英文。"""
     chat = FakeChat(tools_script=[text_msg("")])
-    loop = AgentLoop(chat, make_registry(), ToolRunner(make_registry()))
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run("空调采购项目有哪些？", lang="en")
     assert r.answer == EMPTY_ANSWER_TEXT_EN
 
@@ -398,7 +401,7 @@ def test_leak_recovery_respects_mounted_subset() -> None:
 
     reg = make_registry()
     reg.register(WebTool())
-    runner = ToolRunner(reg)
+    runner = ToolRunner()
 
     # 未挂载工具的内联泄漏：不执行，走重生成
     chat = FakeChat(tools_script=[
@@ -422,3 +425,30 @@ def test_leak_recovery_respects_mounted_subset() -> None:
     names = [t["function"]["name"] for t in recoveries[0]["tools"]]
     assert "search_web" not in names  # 续写口径 = 挂载子集
     assert "search_knowledge" in names
+
+
+def test_hallucinated_unmounted_tool_not_executed_via_fc() -> None:
+    """P1-9（审计）：web_enabled=False 时模型经 FC 幻觉点名 search_web（全量
+    注册表里有）——执行期按挂载子集回 unknown_tool，绝不真执行。与内联泄漏
+    （上一用例）互为两条触发面：模型 schemas 里没有的工具不该被批处理执行。"""
+    ran: list[str] = []
+
+    class WebTool(BaseTool[SearchArgs]):
+        name = "search_web"
+        description = "联网检索（fake）"
+        args_model = SearchArgs
+
+        def run(self, args: SearchArgs) -> dict:
+            ran.append(args.query)
+            return tool_result(text=f"[1] 网页内容：{args.query}")
+
+    reg = make_registry()
+    reg.register(WebTool())
+    chat = FakeChat(tools_script=[
+        tool_msg("search_web", {"query": "公告"}),
+        text_msg("材料不可用，依据已有知识回答。"),
+    ])
+    loop = AgentLoop(chat, reg, ToolRunner())
+    r = loop.run("空调采购有哪些？", web_enabled=False)
+    assert ran == []  # 未挂载幻觉点名绝不执行（修复前按全量注册表会真跑）
+    assert r.answer == "材料不可用，依据已有知识回答。"

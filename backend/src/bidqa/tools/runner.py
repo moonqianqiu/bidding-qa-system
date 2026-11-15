@@ -68,20 +68,26 @@ def quality_note(name: str, payload: dict[str, Any]) -> str:
 
 
 class ToolRunner:
-    def __init__(self, registry: ToolRegistry, batch_timeout: float = BATCH_TIMEOUT,
+    """纯执行器（审计 P0-1 收口）：不持有注册表——执行期注册表由调度层按批
+    显式传入（本会话挂载子集）。原实现构造器持有可变 registry 且 loop.run 首行
+    无条件覆盖进程级单例的注册表：并发请求互相串味（unknown_tool/串模型槽位/
+    绕过联网开关）。"""
+
+    def __init__(self, batch_timeout: float = BATCH_TIMEOUT,
                  max_workers: int = MAX_WORKERS):
-        self.registry = registry
         self.batch_timeout = batch_timeout
         self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="toolrun")
 
-    def run_batch(self, calls: list[ToolCall]) -> list[ToolOutcome]:
-        """并行执行一批调用；返回顺序与 calls 一致；任何路径都不抛异常。"""
+    def run_batch(self, calls: list[ToolCall], registry: ToolRegistry) -> list[ToolOutcome]:
+        """并行执行一批调用；registry=本会话挂载子集（P0-1/P1-9：未挂载工具
+        一律 unknown_tool，联网开关/首轮约束不可被幻觉点名绕过）。
+        返回顺序与 calls 一致；任何路径都不抛异常。"""
         if not calls:
             return []
 
         futures: dict[Future, ToolCall] = {}
         for call in calls:
-            futures[self._pool.submit(self._execute, call)] = call
+            futures[self._pool.submit(self._execute, call, registry)] = call
 
         done, _ = wait(list(futures), timeout=self.batch_timeout)
         results: list[ToolOutcome] = []
@@ -95,10 +101,11 @@ class ToolRunner:
         return results
 
     # ── 单工具执行（隔离：所有异常在这里消化）──
-    def _execute(self, call: ToolCall) -> tuple[ToolCall, dict[str, Any], bool, int]:
+    def _execute(self, call: ToolCall, registry: ToolRegistry
+                 ) -> tuple[ToolCall, dict[str, Any], bool, int]:
         t0 = time.perf_counter()
         try:
-            tool = self.registry.get(call.name)
+            tool = registry.get(call.name)
             if tool is None:
                 return call, {"error": "unknown_tool", "tool": call.name,
                               "detail": f"未注册工具: {call.name}"}, False, self._ms(t0)

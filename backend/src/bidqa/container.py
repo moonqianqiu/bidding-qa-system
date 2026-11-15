@@ -24,4 +24,4 @@ def build_agent_stack(provider: str | None = None) -> tuple:
     chat = build_chat_for(provider) if provider else build_chat()
     registry = build_registry(build_retriever(), chat, build_bp_repo(), build_neo(),
                               {}, build_reranker())
-    return chat, registry, ToolRunner(registry)
+    return chat, registry, ToolRunner()

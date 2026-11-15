@@ -82,7 +82,7 @@ def make_factory(chat: FakeChat, with_tools: bool = True):
     if with_tools:  # 门禁要求：黄金集所需工具必须注册（模拟真实装配）
         for name in ("search_database", "search_knowledge", "search_graph"):
             reg.register(_StubTool(name))
-    runner = ToolRunner(reg)
+    runner = ToolRunner()
 
     def factory():
         return AgentLoop(chat, reg, runner)

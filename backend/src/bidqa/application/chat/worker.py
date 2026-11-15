@@ -69,12 +69,11 @@ _shared_runner: ToolRunner | None = None
 
 
 def shared_runner() -> ToolRunner:
-    """ToolRunner 进程内单例（工具在执行期按注册表查找；单进程约定 docs/01 §6）。"""
+    """ToolRunner 进程内单例（纯执行器：注册表由各请求按挂载子集显式传入，
+    P0-1 收口后并发请求不再共享可变注册表；单进程约定 docs/01 §6）。"""
     global _shared_runner
     if _shared_runner is None:
-        from bidqa.tools.base import ToolRegistry
-
-        _shared_runner = ToolRunner(ToolRegistry())
+        _shared_runner = ToolRunner()
     return _shared_runner
 
 

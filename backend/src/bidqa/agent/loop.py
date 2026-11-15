@@ -81,7 +81,6 @@ class AgentLoop:
         result = LoopResult(answer="")
         names = self.registry.names()
 
-        self.runner.registry = self.registry  # 执行器以调度层注册表为唯一事实源
         mounted = mount_tools(self.registry, web_enabled=web_enabled, first_round=first_round)
         underq = first_round and is_underqualified(question)
         skill_text = skills_mod.skill_text_for(  # C9 零往返（一层点名/二层指代回看）
@@ -160,7 +159,7 @@ class AgentLoop:
 
             events("status", {"stage": "取数中"})
             batch = [ToolCall(name=n, arguments=a) for _, n, a in calls]
-            outcomes = self.runner.run_batch(batch)
+            outcomes = self.runner.run_batch(batch, mounted)  # 挂载子集（P0-1/P1-9）
             self._collect(outcomes, result)
 
             for out in outcomes:  # D6 中途触发（工具表内被模型点名）→ 同样走澄清收口
@@ -263,7 +262,7 @@ class AgentLoop:
                 if not result.first_tool:
                     result.first_tool = inline.name
                 result.tool_trace.append([{"name": inline.name, "arguments": inline.arguments}])
-                outcomes = self.runner.run_batch([inline])
+                outcomes = self.runner.run_batch([inline], mounted)  # 挂载子集（P0-1/P1-9）
                 self._collect(outcomes, result)
                 messages.append({"role": "assistant", "content": text})
                 messages.append(outcomes[0].as_tool_message())

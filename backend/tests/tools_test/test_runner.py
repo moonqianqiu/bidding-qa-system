@@ -53,8 +53,9 @@ def make_registry() -> ToolRegistry:
 
 
 def test_path_success() -> None:
-    runner = ToolRunner(make_registry())
-    [out] = runner.run_batch([ToolCall("echo", {"text": "你好"})])
+    reg = make_registry()
+    runner = ToolRunner()
+    [out] = runner.run_batch([ToolCall("echo", {"text": "你好"})], reg)
     assert out.ok and out.payload["text"] == "echo: 你好"
     assert out.payload["empty"] is False
     assert out.elapsed_ms >= 0
@@ -62,8 +63,9 @@ def test_path_success() -> None:
 
 def test_path_exception_isolated() -> None:
     """单工具异常不影响同批其他工具（隔离性）。"""
-    runner = ToolRunner(make_registry())
-    outs = runner.run_batch([ToolCall("boom", {"text": "x"}), ToolCall("echo", {"text": "y"})])
+    reg = make_registry()
+    runner = ToolRunner()
+    outs = runner.run_batch([ToolCall("boom", {"text": "x"}), ToolCall("echo", {"text": "y"})], reg)
     assert outs[0].ok is False and "RuntimeError" in outs[0].payload["error"]
     assert outs[0].payload["tool"] == "boom"
     assert outs[1].ok and outs[1].payload["text"] == "echo: y"
@@ -71,22 +73,25 @@ def test_path_exception_isolated() -> None:
 
 def test_path_timeout_fixed_format() -> None:
     """超时固定格式 {"error":"timeout","tool":…}（C3 让模型可决策重试/放弃）。"""
-    runner = ToolRunner(make_registry(), batch_timeout=0.3)
-    [out] = runner.run_batch([ToolCall("slow", {"text": "x"})])
+    reg = make_registry()
+    runner = ToolRunner(batch_timeout=0.3)
+    [out] = runner.run_batch([ToolCall("slow", {"text": "x"})], reg)
     assert out.ok is False
     assert out.payload == {"error": "timeout", "tool": "slow"}
 
 
 def test_path_unknown_tool() -> None:
-    runner = ToolRunner(make_registry())
-    [out] = runner.run_batch([ToolCall("nope", {})])
+    reg = make_registry()
+    runner = ToolRunner()
+    [out] = runner.run_batch([ToolCall("nope", {})], reg)
     assert out.ok is False and out.payload["error"] == "unknown_tool"
     assert out.payload["tool"] == "nope"
 
 
 def test_path_bad_arguments() -> None:
-    runner = ToolRunner(make_registry())
-    [out] = runner.run_batch([ToolCall("echo", {"text": ""})])  # 违反 min_length
+    reg = make_registry()
+    runner = ToolRunner()
+    [out] = runner.run_batch([ToolCall("echo", {"text": ""})], reg)  # 违反 min_length
     assert out.ok is False and out.payload["error"] == "bad_arguments"
     # 自纠闭环最后一跳：detail 必须携带 pydantic 错误文案（模型据此修正参数，
     # 2026-11-15 审计 P3-8——只回 error 码不回 detail 时此断言能红）
@@ -95,9 +100,10 @@ def test_path_bad_arguments() -> None:
 
 def test_parallel_batch_wall_clock() -> None:
     """一轮内多工具并行：两个 1.2s 任务整批 <2s（串行则 ≥2.4s）。"""
-    runner = ToolRunner(make_registry())
+    reg = make_registry()
+    runner = ToolRunner()
     t0 = time.perf_counter()
-    outs = runner.run_batch([ToolCall("slow", {"text": "a"}), ToolCall("slow", {"text": "b"})])
+    outs = runner.run_batch([ToolCall("slow", {"text": "a"}), ToolCall("slow", {"text": "b"})], reg)
     wall = time.perf_counter() - t0
     assert all(out.ok for out in outs)
     assert wall < 2.2
@@ -162,8 +168,8 @@ def test_run_batch_appends_note_to_text() -> None:
 
     reg = ToolRegistry()
     reg.register(KnowledgeScoreTool([0.2, 0.3]))
-    runner = ToolRunner(reg)
-    out = runner.run_batch([ToolCall("search_knowledge", {"text": "q"})])[0]
+    runner = ToolRunner()
+    out = runner.run_batch([ToolCall("search_knowledge", {"text": "q"})], reg)[0]
     assert out.ok
     assert out.payload["text"].endswith(
         "（⚠️ 相关性偏低：2 条，均分 0.25——材料与问题不符时建议换关键词重新检索）")
@@ -176,3 +182,20 @@ def test_quality_note_skips_when_scores_none() -> None:
     assert quality_note("search_knowledge",
                         {"sources": [{"score": None}, {"score": 0.8}]}).startswith(
         "（✅ 检索质量良好：1 条")
+
+
+def test_run_batch_registry_is_per_call() -> None:
+    """P0-1 契约：执行期注册表按批显式传入，Runner 不持有可变注册表——
+    进程内单例 Runner 被多个调度方交替使用互不串味（原实现 loop.run 首行
+    无条件覆盖共享 registry：并发请求互相 unknown_tool/串模型槽位/绕过联网开关）。"""
+    reg_a, reg_b = ToolRegistry(), ToolRegistry()
+    reg_a.register(EchoTool())
+    runner = ToolRunner()
+    assert runner.run_batch([ToolCall("echo", {"text": "a"})], reg_a)[0].ok
+    [cross] = runner.run_batch([ToolCall("echo", {"text": "a"})], reg_b)  # 空表：不可见
+    assert cross.ok is False and cross.payload["error"] == "unknown_tool"  # 各用各的表
+
+
+def test_runner_has_no_mutable_registry_attribute() -> None:
+    """P0-1 结构守卫：Runner 不再持有 .registry 属性（可变共享态的根）。"""
+    assert not hasattr(ToolRunner(), "registry")
