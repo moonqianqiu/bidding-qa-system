@@ -19,7 +19,9 @@ def build_bp_query(args: dict[str, Any], reverse: bool = False) -> tuple[str, li
 
     args: {query_type(6枚举), keyword?, filters?, top_n?, date_range?}
       filters: {白名单列: 标量}（精确匹配）；date_range: {field(白名单日期列), start?, end?}
-    reverse: detail_search 关键词反向变体（关键词包含字段值；其余 query_type 忽略）
+      keyword: 全部 query_type 生效——四列（项目名/中标人/标的物/编号）片段匹配，
+        聚合类=过滤后聚合；reverse 反向变体仅 detail_search（bp_repo 正向落空兜底）
+    reverse: detail_search 反向变体（关键词包含字段值；其余 query_type 忽略）
     """
     query_type = args.get("query_type", "")
     if query_type not in QUERY_TYPES:
@@ -53,13 +55,24 @@ def build_bp_query(args: dict[str, Any], reverse: bool = False) -> tuple[str, li
             where.append(f"{field} <= %s")
             params.append(end)
 
-    where_sql = f" WHERE {' AND '.join(where)}" if where else ""
     top_n = args.get("top_n")
     if top_n is None:
         top_n = 10
     if not isinstance(top_n, int) or isinstance(top_n, bool) or not 1 <= top_n <= 100:
         raise ValueError("top_n 须为 1..100 整数")
     keyword = args.get("keyword")
+    # keyword 对全部查询类型生效（docs/01 §4.3）：四列（项目名/中标人/标的物/编号）
+    # 片段匹配，转义后参数化；聚合类=过滤后聚合。此前只在 detail_search 分支生效，
+    # 聚合类传 keyword 被静默丢弃（「空调的主要供应商」返回过全库 TopN）。唯一例外：
+    # detail_search 的 reverse 反向变体（bp_repo 正向落空时触发）让位于反向。
+    if keyword and not (reverse and query_type == "detail_search"):
+        like = f"%{escape_like(str(keyword))}%"
+        where.append(
+            "(project_name LIKE %s ESCAPE '\\' OR winner LIKE %s ESCAPE '\\' "
+            "OR subject_matter LIKE %s ESCAPE '\\' OR project_no LIKE %s ESCAPE '\\')"
+        )
+        params.extend([like, like, like, like])
+    where_sql = f" WHERE {' AND '.join(where)}" if where else ""
 
     if query_type in ("subject_agg", "region_agg"):
         group_col = "subject_matter" if query_type == "subject_agg" else "region"
@@ -88,24 +101,17 @@ def build_bp_query(args: dict[str, Any], reverse: bool = False) -> tuple[str, li
         )
         params.append(top_n)
         return sql, params
-    # detail_search：keyword LIKE 三列（项目名/中标人/标的物），转义后参数化
-    if keyword:
-        like = f"%{escape_like(str(keyword))}%"
-        if reverse:
-            # 反向匹配（参考项目实证）：LLM 关键词常是实际名称的**超集**（如带
-            # 「招标公告」后缀），正向 LIKE 落空时改查「关键词包含字段值」。
-            # 仅 project_name（中标人/标的物反向噪音大）；char_length>=3 挡超短
-            # 字段值造成全表命中；关键词是被匹配串而非模式，%/_ 无需转义。
-            # psycopg 参数化查询下 SQL 文本里的字面 % 必须写作 %%
-            where.append(
-                "(char_length(project_name) >= 3 AND %s ILIKE '%%' || project_name || '%%')")
-            params.append(str(keyword))
-        else:
-            where.append(
-                "(project_name LIKE %s ESCAPE '\\' OR winner LIKE %s ESCAPE '\\' "
-                "OR subject_matter LIKE %s ESCAPE '\\' OR project_no LIKE %s ESCAPE '\\')"
-            )
-            params.extend([like, like, like, like])
+    # detail_search：正向 keyword 已在上方统一处理；此处只剩反向变体兜底
+    # （bp_repo 正向落空且关键词 ≥3 字时触发）
+    if keyword and reverse:
+        # 反向匹配（参考项目实证）：LLM 关键词常是实际名称的**超集**（如带
+        # 「招标公告」后缀），正向 LIKE 落空时改查「关键词包含字段值」。
+        # 仅 project_name（中标人/标的物反向噪音大）；char_length>=3 挡超短
+        # 字段值造成全表命中；关键词是被匹配串而非模式，%/_ 无需转义。
+        # psycopg 参数化查询下 SQL 文本里的字面 % 必须写作 %%
+        where.append(
+            "(char_length(project_name) >= 3 AND %s ILIKE '%%' || project_name || '%%')")
+        params.append(str(keyword))
         where_sql = f" WHERE {' AND '.join(where)}"
     order_col = "publish_date"
     sql = (

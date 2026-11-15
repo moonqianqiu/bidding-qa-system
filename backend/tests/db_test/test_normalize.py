@@ -98,6 +98,42 @@ def test_query_reverse_keeps_filters_and_ignores_on_aggregate() -> None:
     assert "ILIKE" not in agg_sql  # 非 detail_search 不受 reverse 影响
 
 
+# ── keyword 对全部查询类型生效（2026-11-15 修复：聚合类曾静默丢参，
+#    「空调的主要供应商」返回过无过滤全库 TopN）──
+def test_query_keyword_filters_supplier_topn() -> None:
+    sql, params = build_bp_query({"query_type": "supplier_topn", "keyword": "空调",
+                                  "top_n": 5})
+    assert all(f"{col} LIKE" in sql for col in
+               ("project_name", "winner", "subject_matter", "project_no"))
+    assert "GROUP BY winner" in sql
+    assert params == ["%空调%"] * 4 + [5]
+
+
+def test_query_keyword_filters_all_agg_types() -> None:
+    for qt, group in (("subject_agg", "GROUP BY subject_matter"),
+                      ("region_agg", "GROUP BY region"),
+                      ("purchaser_topn", "GROUP BY purchaser"),
+                      ("time_trend", "date_trunc('month', publish_date)")):
+        sql, params = build_bp_query({"query_type": qt, "keyword": "空调", "top_n": 3})
+        assert "project_name LIKE" in sql, qt
+        assert group in sql, qt
+        assert params[:4] == ["%空调%"] * 4 and params[-1] == 3, qt
+
+
+def test_query_keyword_escapes_on_aggregate() -> None:
+    _, params = build_bp_query({"query_type": "supplier_topn", "keyword": "空%调_"})
+    assert params[0] == "%空\\%调\\_%"
+    assert params[3] == "%空\\%调\\_%"  # 四列同参
+
+
+def test_query_keyword_survives_reverse_on_aggregate() -> None:
+    """keyword 在任何参数组合下都不被静默丢弃：聚合 + reverse 变体仍按正向过滤。"""
+    sql, params = build_bp_query({"query_type": "region_agg", "keyword": "空调"},
+                                 reverse=True)
+    assert "ILIKE" not in sql and "project_name LIKE" in sql
+    assert params[:4] == ["%空调%"] * 4
+
+
 def test_query_filters_whitelist_only() -> None:
     with pytest.raises(ValueError, match="白名单"):
         build_bp_query({"query_type": "detail_search", "filters": {"password": "x"}})

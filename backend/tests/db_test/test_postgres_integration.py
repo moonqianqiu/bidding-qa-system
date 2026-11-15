@@ -122,6 +122,23 @@ def test_d3_tool_end_to_end(clean_pg: PgConn) -> None:
     assert empty["empty"] is True and "放宽限定条件" in empty["text"]
 
 
+def test_aggregate_keyword_filters(clean_pg: PgConn) -> None:
+    """keyword 对聚合类生效（2026-11-15 修复）：TopN 只统计关键词命中行。"""
+    bp, _, _ = _stores(clean_pg)
+    bp.upsert_bp([dict(r) for r in ROWS], "it-1")
+    tool = SearchDatabaseTool(bp)
+    batch = {"filters": {"batch_id": "it-1"}}  # 开发库真实数据按批次隔离
+    all_rows, _ = bp.query_bp({"query_type": "supplier_topn", "top_n": 10, **batch})
+    ac_rows, _ = bp.query_bp({"query_type": "supplier_topn", "keyword": "空调",
+                              "top_n": 10, **batch})
+    assert len(ac_rows) < len(all_rows)  # 未含关键词的乙公司（电梯）被过滤
+    assert [r["label"] for r in ac_rows] == ["甲公司"]  # 只剩空调采购项目的中标人
+    assert ac_rows[0]["projects"] == 1
+    empty = tool.run(tool.args_model.model_validate(
+        {"query_type": "supplier_topn", "keyword": "不存在的关键词XYZ", **batch}))
+    assert empty["empty"] is True and "放宽限定条件" in empty["text"]  # 诚实空结果
+
+
 def test_excel_import_dry_run(clean_pg: PgConn, tmp_path) -> None:
     """F6 统一试运行约定：--dry-run 打条数+抽样+不写库。"""
     from openpyxl import Workbook

@@ -13,7 +13,10 @@ from bidqa.tools.base import BaseTool, empty_result, tool_result
 
 class SearchDatabaseArgs(BaseModel):
     query_type: str = Field(description="查询类型枚举")
-    keyword: str | None = Field(default=None, max_length=200, description="明细检索关键词")
+    keyword: str | None = Field(
+        default=None, max_length=200,
+        description="关键词过滤（全部查询类型生效）：对项目名/中标人/标的物/编号四列片段匹配，"
+                    "聚合类=过滤后聚合。如供应商TopN 加 keyword=『空调』只统计空调相关项目。")
     filters: dict[str, Any] | None = Field(
         default=None,
         description="白名单列过滤，键用英文列名：region / subject_matter / winner / purchaser / "
@@ -35,6 +38,7 @@ class SearchDatabaseTool(BaseTool[SearchDatabaseArgs]):
     name = "search_database"
     description = ("查询招投标业务库（项目明细表）的**数值统计与明细**：各标的物/各地区项目数与金额、"
                    "TopN 排名、按月趋势、关键词明细检索。问『多少个/多少钱/前几名/明细』优先用它。"
+                   "keyword（如『空调』）对全部查询类型生效：先过滤再聚合/取明细。"
                    "可用 region / subject_matter / winner / purchaser 等白名单列过滤（地区传省或市均可）。"
                    "金额单位=元。")
     args_model = SearchDatabaseArgs
