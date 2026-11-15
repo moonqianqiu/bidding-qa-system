@@ -99,6 +99,46 @@ def test_judge_dim_invalid_output_is_null_not_zero(tmp_path, monkeypatch) -> Non
     assert dim is None
 
 
+def test_judge_dim_none_not_cached_and_rejudged() -> None:
+    """None 不入缓存（硬约束 2 只缓存成功结果）：判分失败后恢复时同题必须重判——
+    缓存 None 曾让该题此后永久 null 不再判（审计 P0-4 污染 G2）。"""
+    class Flaky:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.ok = False
+
+        def chat(self, messages, temperature=0.0):
+            self.calls += 1
+            return "1" if self.ok else "我觉得不行"
+
+    judge = Flaky()
+    cache: dict = {}
+    assert ragas.judge_dim(judge, "faithfulness", "q", "a", "ctx", cache, "k") is None
+    assert cache == {}  # None 不写缓存
+    judge.ok = True
+    assert ragas.judge_dim(judge, "faithfulness", "q", "a", "ctx", cache, "k") == 1
+    assert judge.calls == 2  # 第二次必须真调（None 曾被缓存 → 不再请求）
+    assert ragas.judge_dim(judge, "faithfulness", "q", "a", "ctx", cache, "k") == 1
+    assert judge.calls == 2  # 成功结果才进缓存
+
+
+def test_judge_dim_legacy_none_cache_entry_is_ignored() -> None:
+    """旧缓存文件已被 None 污染的条目：命中分支忽略并重判覆盖（P0-4 收口）。"""
+    cache: dict = {"k": {"faithfulness": None}}
+
+    class Once:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat(self, messages, temperature=0.0):
+            self.calls += 1
+            return "1"
+
+    j = Once()
+    assert ragas.judge_dim(j, "faithfulness", "q", "a", "ctx", cache, "k") == 1
+    assert j.calls == 1 and cache["k"]["faithfulness"] == 1
+
+
 def test_rolling_retention_keeps_100(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     results = tmp_path / "eval" / "results"

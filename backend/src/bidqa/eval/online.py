@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import random
 import threading
 import time
@@ -24,6 +25,7 @@ logger = logging.getLogger("bidqa.eval.online")
 
 FLUSH_INTERVAL = 5.0
 BEHAVIOR_MAX = 2048  # 有界队列上限（满丢最旧）
+JUDGE_QUEUE_MAX = 8  # 判分队列容量即并发上限（硬约束 4；满即丢计数，绝不无限积压）
 DEDUP_WINDOW = 60.0
 RESULTS_DIR = Path("eval/results/online")
 
@@ -55,9 +57,12 @@ class OnlineEval:
         self._dropped = 0
         self._dedup: dict[str, float] = {}  # 去重键 -> monotonic ts
         self._stats = {"behavior": 0, "sampled": 0, "judged": 0, "judge_fail": 0,
-                       "down_feedback": 0, "dedup_skipped": 0}
+                       "down_feedback": 0, "dedup_skipped": 0, "judge_dropped": 0}
         self._closed = False
+        self._judge_q: queue.Queue = queue.Queue(maxsize=JUDGE_QUEUE_MAX)
         threading.Thread(target=self._flush_loop, daemon=True, name="online-eval").start()
+        threading.Thread(target=self._judge_worker, daemon=True,
+                         name="online-judge").start()
 
     # ── 行为事件（全量免费，无正文） ──
 
@@ -121,12 +126,25 @@ class OnlineEval:
     # ── 忠实度单维（复用 G2 判分槽位 + 缓存） ──
 
     def _judge_async(self, trigger: str, sample: dict) -> None:
-        threading.Thread(target=self._judge, args=(trigger, sample),
-                         daemon=True, name="online-judge").start()
+        """入有界队列（审计 P0-4：原每样本新起线程=无界并发烧钱）；满即丢并计数。"""
+        try:
+            self._judge_q.put_nowait((trigger, sample))
+        except queue.Full:
+            with self._lock:
+                self._stats["judge_dropped"] += 1
+
+    def _judge_worker(self) -> None:
+        """单守护 worker：判分串行化（容量=并发上限的「上限」端）。"""
+        while not self._closed:
+            try:
+                trigger, sample = self._judge_q.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            self._judge(trigger, sample)
 
     def _judge(self, trigger: str, sample: dict) -> None:
         try:
-            from bidqa.eval.ragas import judge_dim, JUDGE_CACHE_DIR
+            from bidqa.eval.ragas import judge_dim, _load_cache
             settings = _settings()
             if not settings.has_judge:
                 return
@@ -135,7 +153,7 @@ class OnlineEval:
                 logger.warning("在线判分与主槽位同指纹，跳过（防自评）")  # 只告警不抛
                 return
             judge = _judge_client(settings)
-            cache: dict = {}
+            cache = _load_cache(judge_fingerprint(settings))  # 先读离线缓存（P0-4：原每次空 dict=重复烧钱）
             context = "\n\n".join(f"[{i + 1}] {s.get('title', '')}\n{s.get('text', '')}"
                                   for i, s in enumerate(sample.get("sources", [])))
             cache_key = f"online|{trigger}|{sample.get('question', '')[:64]}|{sample.get('answer', '')[:64]}"
@@ -202,23 +220,38 @@ def _settings() -> Any:
     return _settings_cache[1]
 
 
+_judge_client_cache: tuple[tuple[str, str, str], Any] | None = None
+
+
 def _judge_client(settings: Any) -> Any:
-    from bidqa.eval.judge import build_judge
-    return build_judge(settings)
+    """判分客户端按「端点+凭据+模型」指纹单例化（审计 P0-4：原每次新建且不 close）。"""
+    global _judge_client_cache
+    fp = (settings.JUDGE_BASE_URL, settings.JUDGE_API_KEY, settings.JUDGE_MODEL)
+    if _judge_client_cache is None or _judge_client_cache[0] != fp:
+        from bidqa.eval.judge import build_judge
+        _judge_client_cache = (fp, build_judge(settings))
+    return _judge_client_cache[1]
+
+
+_judge_cache_lock = threading.Lock()
 
 
 def _merge_judge_cache(settings: Any, cache: dict) -> None:
-    """把在线判分结果并回判分缓存（与离线共用同一缓存文件，离线跑批直接受益）。"""
+    """把在线判分结果并回判分缓存（与离线共用同一缓存文件，离线跑批直接受益）。
+
+    全程持锁：读-并-写非原子，离线 _save_cache 与在线 merge 并发时曾共用固定
+    .tmp 名互相覆盖（审计 P1-20 的缓存写入面，先在 0.4 收口）。"""
     try:
         from bidqa.eval.agent_eval import atomic_write_json
         from bidqa.eval.judge import judge_fingerprint
         from bidqa.eval.ragas import _cache_path
         path = _cache_path(judge_fingerprint(settings))
-        existing: dict = {}
-        if path.exists():
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        existing.update(cache)
-        atomic_write_json(path, existing)
+        with _judge_cache_lock:
+            existing: dict = {}
+            if path.exists():
+                existing = json.loads(path.read_text(encoding="utf-8"))
+            existing.update(cache)
+            atomic_write_json(path, existing)
     except Exception:
         pass
 

@@ -59,10 +59,15 @@ def _save_cache(fingerprint: tuple[str, str, str], cache: dict) -> None:
 
 def judge_dim(judge: ChatClient, dim: str, question: str, answer: str,
               context: str, cache: dict, cache_key: str) -> int | None:
-    """单维判分（0/1）；判分输出非法 → None（该维不计入，绝不记 0——null≠0）。"""
-    if cache_key in cache and dim in cache[cache_key]:
-        value = cache[cache_key][dim]
-        return None if value is None else int(value)
+    """单维判分（0/1）；判分输出非法 → None（该维不计入，绝不记 0——null≠0）。
+
+    只缓存成功判分（硬约束 2）：None 不入缓存，命中分支也忽略历史 None 条目——
+    旧缓存文件里被 None 污染的题，下次判分自然覆盖（审计 P0-4：缓存 None 曾让
+    该题此后永久 null 不再判）。
+    """
+    cached = cache.get(cache_key, {}).get(dim)
+    if cached is not None:
+        return int(cached)
     try:
         raw = str(judge.chat([
             {"role": "system", "content": _DIM_PROMPTS[dim]},
@@ -71,7 +76,8 @@ def judge_dim(judge: ChatClient, dim: str, question: str, answer: str,
         score = 1 if raw.startswith("1") else (0 if raw.startswith("0") else None)
     except Exception:
         score = None
-    cache.setdefault(cache_key, {})[dim] = score
+    if score is not None:
+        cache.setdefault(cache_key, {})[dim] = score
     return score
 
 
