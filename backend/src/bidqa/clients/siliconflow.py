@@ -22,10 +22,12 @@ class DataSourceError(RuntimeError):
 
 
 def _post_with_retry(client: httpx.Client, url: str, payload: dict,
-                     source: str, max_attempts: int = 3, retry_429: bool = True) -> dict:
-    """POST JSON；429/5xx/网络错误退避重试（1s/2s/4s）。
+                     source: str, max_attempts: int = 3, retry_429: bool = False) -> dict:
+    """POST JSON；5xx/网络错误退避重试（1s/2s/4s）；**429 缺省不重试**（立即报错）。
 
-    retry_429=False 时 429 立即报错（调用方判定该端点不值得重试，见 llm.retry_429_eligible）。
+    429 只对 token.sensenova.cn 定向重试（AGENTS 红线 / docs/01 §5）：由 ChatClient
+    按端点白名单显式传 retry_429=retry_429_eligible(base_url)；嵌入/重排/Tavily/Exa
+    等其余端点一律缺省 False——审计 P0-3（2026-11-15）：原默认 True 曾全局重试 429。
     """
     last: Exception | None = None
     for attempt in range(max_attempts):

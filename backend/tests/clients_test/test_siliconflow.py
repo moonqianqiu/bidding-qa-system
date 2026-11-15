@@ -41,9 +41,22 @@ def test_embed_query_uses_same_entry():
 
 
 @respx.mock
-def test_retry_on_429_then_success():
+def test_429_raises_immediately_no_retry():
+    """429 红线（AGENTS/docs/01 §5）：嵌入/重排等非 sensenova 端点绝不重试 429，
+    立即 DataSourceError——原实现默认 retry_429=True 曾违反定版红线（审计 P0-3）。"""
+    route = respx.post(f"{BASE}/embeddings").mock(
+        return_value=httpx.Response(429, json={}))
+    client = make_client()
+    with pytest.raises(DataSourceError, match="429"):
+        client.embed_documents(["x"])
+    assert route.call_count == 1  # 一次都不重试
+
+
+@respx.mock
+def test_5xx_retry_then_success():
+    """5xx/网络错误退避重试保留（与 429 定向重试的边界：只有 429 按端点白名单）。"""
     route = respx.post(f"{BASE}/embeddings").mock(side_effect=[
-        httpx.Response(429, json={}),
+        httpx.Response(500, json={}),
         httpx.Response(200, json={"data": [{"embedding": [0.1] * 4}]}),
     ])
     client = make_client()
