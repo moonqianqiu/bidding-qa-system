@@ -32,7 +32,7 @@
 
 | 项 | 性质 | 说明 |
 |---|---|---|
-| v2.3 双通道付费验收 | 付费动作（待用户） | 代码已全绿；`backend/.env` 待用户自填 `OCR_*` 三行（建议 `PaddlePaddle/PaddleOCR-VL`，SiliconFlow 有模型）→ 重启后端 → 表格截图应 `mode_used=ocr` 且答案引用图中数字、照片应 `mode_used=describe`；开发日志有验收清单 |
+| v2.3 双通道付费验收 | ✅ 2026-11-15 三 PASS | 文档图 auto→OCR（PaddleOCR-VL-1.5 原件逐字提取，编号/金额全对）、图表图 auto→describe（远端多模态 Qwen3.8-27B 结构化描述准确）、带图提问 3.8s 直答并引用 BZGY2023CG141 与 ¥12,500,000.00；过程与教训见开发日志 11-15 行。**vision 槽位现为用户定版远端多模态 Qwen3.8-27B（llama.cpp，.env 模型 id 未变）**；OCR=SiliconFlow PaddleOCR-VL-1.5 |
 | CI / 私有远端 | P0 工程化 | 新仓 `git remote -v` 为空——建私有库 `git remote add origin <url> && git push origin main --tags` |
 | `detail_search` 金额排序 | 功能排期 | 查询类型白名单 + order_by 列白名单 + 工具描述更新；**重构完成后另立一轮**（不在重构 commit 混功能） |
 | 离群值溯源 | 数据排查 | 66 亿（涡阳 BZGY2023CG141）/ 23.7 亿 全局头部可疑值，源 xlsx 不可考——需与甲方核对源表 |
