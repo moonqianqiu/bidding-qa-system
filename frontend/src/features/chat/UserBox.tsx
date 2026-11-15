@@ -58,9 +58,9 @@ export default function UserBox(p: Props) {
           <button
             onClick={p.onLogout}
             title={t.logout}
-            className="shrink-0 text-faint hover:text-fg"
+            className="shrink-0 rounded-lg border border-line px-2.5 py-1.5 text-dim transition hover:border-sky-800 hover:text-sky-300"
           >
-            ⎋
+            {t.logout}
           </button>
         </div>
       )}

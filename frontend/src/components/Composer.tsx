@@ -3,12 +3,15 @@
 // A3 输入区：IME 组词防误发 + 联网/深度思考/按文档解析开关 + 示例问题点击直发。
 // 深浅色/语言收进设置对话框，入口在侧栏左下角（用户指定布局，不放输入区）。
 // 图片上传（v2.3 双通道）：选图只建档、发送时才解析（useImageAttachment）；
-// 📎 仅 vision 就绪时显示（capabilities.vision），按文档解析开关仅 OCR 就绪时显示。
+// 「+」仅 vision 就绪时显示（capabilities.vision），按文档解析开关仅 OCR 就绪时显示。
+// 输入条形态（2026-11-15 UI 轮）：默认一行扁平，多行自动长高、封顶 max（不超 128px）。
 
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import type { Attachment } from "@/lib/types";
 import type { DocMode } from "@/features/chat/useImageAttachment";
+
+const TA_MAX_PX = 128; // 多行长高上限（≈5 行，用户拍板「最多也不要太大」）
 
 export default function Composer({
   disabled,
@@ -51,6 +54,15 @@ export default function Composer({
   const [text, setText] = useState("");
   const composingRef = useRef(false); // IME 组词中不触发发送
   const fileRef = useRef<HTMLInputElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // 自动长高：内容变化时按 scrollHeight 伸展，封顶 TA_MAX_PX（超出内部滚动）
+  useLayoutEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, TA_MAX_PX)}px`;
+  }, [text]);
 
   const submit = () => {
     const value = text.trim();
@@ -100,8 +112,9 @@ export default function Composer({
             ) : null}
           </div>
         )}
-        <div className="flex items-end gap-2 rounded-2xl border border-line bg-panel p-2 focus-within:border-sky-800">
+        <div className="flex items-end gap-2 rounded-xl border border-line bg-panel p-1.5 focus-within:border-sky-800 focus-within:ring-1 focus-within:ring-sky-800/30">
           <textarea
+            ref={taRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onCompositionStart={() => (composingRef.current = true)}
@@ -113,10 +126,10 @@ export default function Composer({
                 submit();
               }
             }}
-            rows={2}
+            rows={1}
             maxLength={4000}
             placeholder={t.placeholder}
-            className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-fg outline-none placeholder:text-faint"
+            className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-fg outline-none placeholder:text-faint"
           />
           {visionReady && (
             <>
@@ -125,9 +138,9 @@ export default function Composer({
                 disabled={disabled || streaming || preparing}
                 title={t.attach}
                 aria-label={t.attach}
-                className="rounded-xl border border-line px-3 py-2 text-sm text-dim transition hover:border-sky-800 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
+                className="shrink-0 rounded-lg border border-line px-3 py-2 text-base leading-none text-dim transition hover:border-sky-800 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                📎
+                +
               </button>
               <input
                 ref={fileRef}
@@ -145,7 +158,7 @@ export default function Composer({
           {streaming ? (
             <button
               onClick={onStop}
-              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 dark:bg-red-900/70 dark:text-red-200 dark:hover:bg-red-800/70"
+              className="shrink-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 dark:bg-red-900/70 dark:text-red-200 dark:hover:bg-red-800/70"
             >
               {t.stop}
             </button>
@@ -153,7 +166,7 @@ export default function Composer({
             <button
               onClick={submit}
               disabled={disabled || !text.trim()}
-              className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              className="shrink-0 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {t.send}
             </button>
