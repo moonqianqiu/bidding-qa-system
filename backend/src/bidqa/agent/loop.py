@@ -149,7 +149,8 @@ class AgentLoop:
             else:
                 text = "".join(content_parts)
                 return self._finalize(text, messages, names, result, rounds, events,
-                                      t0, thinking=thinking, thinking_model=thinking_model,
+                                      t0, mounted=mounted,
+                                      thinking=thinking, thinking_model=thinking_model,
                                       already_streamed=live, lang=lang)
 
             result.tool_called = True
@@ -183,6 +184,7 @@ class AgentLoop:
             text = self._stream_plain(messages, events)
             already_streamed = True
         return self._finalize(text, messages, names, result, rounds, events, t0,
+                              mounted=mounted,
                               thinking=thinking, thinking_model=thinking_model,
                               already_streamed=already_streamed, lang=lang)
 
@@ -243,17 +245,20 @@ class AgentLoop:
 
     def _finalize(self, text: str, messages: list[dict], names: list[str],
                   result: LoopResult, rounds: int, events: EventFn, t0: float,
-                  *, thinking: bool, thinking_model: str,
+                  *, mounted: ToolRegistry, thinking: bool, thinking_model: str,
                   already_streamed: bool = False, lang: str = "zh") -> LoopResult:
-        """C4 泄漏闸 + C6 最终产出。already_streamed=正文已随流下发（勿重复发）。"""
+        """C4 泄漏闸 + C6 最终产出。already_streamed=正文已随流下发（勿重复发）。
+        mounted=本会话挂载子集（C2）：泄漏恢复的执行门与续写 tools 都以它为口径——
+        未挂载工具（如 web 关时的 search_web）绝不因泄漏兜底而复活。"""
         result.rounds = rounds
-        leaked = bool(leaks.detect_leak(text, names))
-        if leaked:
-            events("reset", {"reason": "leak:" + (leaks.detect_leak(text, names) or "")})
+        leaked_at = leaks.detect_leak(text, names)
+        if leaked_at:
+            events("reset", {"reason": "leak:" + leaked_at})
             events("status", {"stage": "重新整理"})
             inline = leaks.parse_inline_tool_call(text)
-            if inline is not None and rounds < MAX_ROUNDS and self.registry.get(inline.name):
-                # 文本兜底：解析出真实执行，继续循环（消耗一个新轮次）
+            if inline is not None and rounds < MAX_ROUNDS and mounted.get(inline.name):
+                # 文本兜底：解析出真实执行，继续循环（消耗一个新轮次）；
+                # 执行门=挂载子集（未挂载工具回落重生成，runner 不经手）
                 result.tool_called = True
                 if not result.first_tool:
                     result.first_tool = inline.name
@@ -263,7 +268,7 @@ class AgentLoop:
                 messages.append({"role": "assistant", "content": text})
                 messages.append(outcomes[0].as_tool_message())
                 events("status", {"stage": "分析中"})
-                msg = self.chat.chat_tools(messages, self.registry.openai_schemas(),
+                msg = self.chat.chat_tools(messages, mounted.openai_schemas(),
                                            temperature=self.temperature)
                 text = str(msg.get("content") or "")
                 if leaks.detect_leak(text, names):
@@ -277,7 +282,7 @@ class AgentLoop:
 
         # C6 深度思考：思考模型重新流式生成（thinking* 先于 token*，缓冲后下发）
         if thinking and thinking_model:
-            if already_streamed and not leaked:  # 深度思考会重写正文 → 先清空
+            if already_streamed and not leaked_at:  # 深度思考会重写正文 → 先清空
                 events("reset", {"reason": "thinking_regen"})
             events("status", {"stage": "深度思考"})
             thinking_buf: list[str] = []
@@ -298,7 +303,7 @@ class AgentLoop:
                 result.degraded.append("thinking_as_body")
             else:
                 body = text
-                if already_streamed and not leaked:
+                if already_streamed and not leaked_at:
                     pass  # 无重生成内容，保留已流正文
             if body is not text:
                 for chunk in thinking_buf:
@@ -306,7 +311,7 @@ class AgentLoop:
                 for chunk in _chunk(body):
                     events("token", {"text": chunk})
             result.answer = body
-        elif not already_streamed or leaked:
+        elif not already_streamed or leaked_at:
             for chunk in _chunk(result.answer):
                 events("token", {"text": chunk})
 

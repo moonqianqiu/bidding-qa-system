@@ -379,3 +379,46 @@ def test_stream_plain_empty_stream_falls_back_once() -> None:
                               lambda k, p: events.append((k, p)))
     assert text == "非流式兜底回答。"
     assert [payload["text"] for kind, payload in events if kind == "token"] == ["非流式兜底回答。"]
+
+
+# ── 泄漏恢复的挂载口径（Round 4 既有债）：恢复路径 = 会话挂载子集，不是全库注册表 ──
+def test_leak_recovery_respects_mounted_subset() -> None:
+    """web_enabled=False（search_web 已注册但未挂载）时：内联 search_web 泄漏
+    绝不执行（回落重生成）；挂载工具的恢复续写 tools 也不含未挂载工具。"""
+    ran: list[str] = []
+
+    class WebTool(BaseTool[SearchArgs]):
+        name = "search_web"
+        description = "联网检索（fake）"
+        args_model = SearchArgs
+
+        def run(self, args: SearchArgs) -> dict:
+            ran.append(args.query)
+            return tool_result(text=f"[1] 网页内容：{args.query}")
+
+    reg = make_registry()
+    reg.register(WebTool())
+    runner = ToolRunner(reg)
+
+    # 未挂载工具的内联泄漏：不执行，走重生成
+    chat = FakeChat(tools_script=[
+        text_msg("让我调用search_web({\"query\": \"公告\"})查证"),
+    ], plain_script=["依据材料[1]：公告已发布。"])
+    loop = AgentLoop(chat, reg, runner)
+    r = loop.run("空调采购有哪些？", web_enabled=False)
+    assert ran == []  # 未挂载工具绝不执行
+    assert r.answer == "依据材料[1]：公告已发布。"
+
+    # 对照：挂载工具的内联泄漏照旧兜底执行；续写轮 tools 不含 search_web
+    chat2 = FakeChat(tools_script=[
+        text_msg("让我调用search_knowledge({\"query\": \"空调\"})查证"),
+        text_msg("依据[1]：空调采购共 12 个项目。"),
+    ])
+    loop2 = AgentLoop(chat2, reg, runner)
+    r2 = loop2.run("空调采购有哪些？", web_enabled=False)
+    assert r2.tool_called is True and r2.sources
+    recoveries = [c for c in chat2.calls if c["kind"] == "tools"]
+    assert recoveries  # 恢复续写走 chat_tools
+    names = [t["function"]["name"] for t in recoveries[0]["tools"]]
+    assert "search_web" not in names  # 续写口径 = 挂载子集
+    assert "search_knowledge" in names
