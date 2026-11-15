@@ -21,11 +21,21 @@ request_stats: dict[str, dict[str, int]] = {}
 log_buffer: deque[dict[str, str]] = deque(maxlen=500)
 
 _KEY_RE = re.compile(r"(sk-[A-Za-z0-9]{4})[A-Za-z0-9-]+([A-Za-z0-9]{4})")
+_BEARER_RE = re.compile(r"(Bearer\s+)[A-Za-z0-9_\-.]{8,}")
+_KV_RE = re.compile(
+    r"((?:api[_-]?key|access[_-]?token|password)['\"]?\s*[:=]\s*)['\"]?[A-Za-z0-9_\-]{6,}",
+    re.IGNORECASE)
+_URL_CRED_RE = re.compile(r"((?:https?|wss?)://)([^\s/@:]+):([^\s/@]+)@")
 
 
 def mask_secrets(text: str) -> str:
-    """脱敏先具体后通用（docs/02 H 域）：先 API key 形态，其余规则按需追加。"""
-    return _KEY_RE.sub(r"\1****\2", text)
+    """脱敏先具体后通用（docs/02 H 域；审计 P2-39：原只有 sk- 一条具体规则——
+    Bearer token / api_key= / URL 内嵌凭据曾裸进日志并经 /api/system/logs 回显）。"""
+    text = _URL_CRED_RE.sub(r"\1***@", text)
+    text = _KV_RE.sub(r"\1****", text)
+    text = _BEARER_RE.sub(r"\1****", text)
+    text = _KEY_RE.sub(r"\1****\2", text)
+    return text
 
 
 def note_request(path: str, status_code: int) -> None:

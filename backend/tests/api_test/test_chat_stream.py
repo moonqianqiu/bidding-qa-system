@@ -682,3 +682,24 @@ def test_degrade_after_half_stream_emits_reset(settings_factory, monkeypatch):
     assert idx_token < idx_reset < idx_degrade  # 半截先清空，降级全文才下发
     full = "".join(e.get("text", "") for e in events if e["type"] == "token")
     assert "降级全文。" in full
+
+
+def test_metrics_note_request_real_status(client, settings_factory, monkeypatch):
+    """P2-5（审计）：note_request 曾在限流/幂等/5031 判定**之前**写死 200——
+    5031（降级）等被计成成功，requests[].errors 恒 0。收口后按真实状态码计数。"""
+    from bidqa.obs import logs as obs_mod
+
+    obs_mod.request_stats.pop("/api/chat/stream", None)
+    chat = FakeChat(tools_script=[text_msg("答")])
+    patch_service(monkeypatch, chat=chat, pg=RecordingPg())
+    events = stream_events(client, {"message": "问", "client_msg_id": "st-1"})
+    assert events[-1]["type"] == "done"
+    stats = obs_mod.request_stats["/api/chat/stream"]
+    assert stats["count"] == 1 and stats["errors"] == 0
+    # 5031：chat 不可用 → 真实 503 → errors 计数（原写死 200 → 恒 0，红）
+    monkeypatch.setattr(availability_mod, "build_chat_for", lambda provider: None)
+    guards_mod.clear_seen()
+    r503 = client.post("/api/chat/stream", json={"message": "问", "client_msg_id": "st-2"})
+    assert r503.status_code == 503
+    stats = obs_mod.request_stats["/api/chat/stream"]
+    assert stats["count"] == 2 and stats["errors"] == 1

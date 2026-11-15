@@ -37,14 +37,21 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
                 settings: Any = Depends(get_settings)) -> Any:
     """SSE 主端点。settings 经 DI 注入（应用工厂 override 可测试）。"""
     from bidqa.obs.logs import note_request
-    note_request("/api/chat/stream", 200)  # H2 行为计数（限流/4091 提前返回不计入）
+
+    def _note(status: int) -> None:
+        note_request("/api/chat/stream", status)  # P2-5：按真实状态码计数（原写死 200 且在判定前调用）
+
+    identity = getattr(request.state, "identity", None)
     # 429 限流（B4；被限流请求不进入任何评测埋点；游客走独立更严配额桶）
     limiter, bucket = rate_identity(request, settings)
     allowed, retry_after = limiter.check(bucket)
     if not allowed:
+        _note(429)
         return rate_limited_429(retry_after)
-    # 4091 幂等（client_msg_id 60s 去重窗口；重试必须换新键）
-    if (conflict := check_client_msg_id(payload.client_msg_id)) is not None:
+    # 4091 幂等（client_msg_id 60s 去重窗口；重试必须换新键；owner 分域防跨用户误撞）
+    owner = (identity.token or identity.user_id or "anon") if identity else "anon"
+    if (conflict := check_client_msg_id(payload.client_msg_id, owner=owner)) is not None:
+        _note(409)
         return JSONResponse(status_code=409,
                             content=error_body(4091, conflict["message"],
                                                detail=conflict["detail"]))
@@ -52,15 +59,16 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
     # 前置可用性检查：该 provider 实际会用的聊天客户端缺失 → HTTP 5031
     # （口径与 worker 主路径一致：缺省/未知 provider 回主槽位；只配命名档不再误 5031）
     if not chat_available(payload.provider):
+        _note(503)
         return degraded_503("chat: 核心槽位未配置")
 
-    identity = getattr(request.state, "identity", None)
     # 会话归属前置校验（审计 P1-1）：登录用户传他人会话 id 一律 4041——不把他人
     # messages/summary 注入模型上下文，也不把回答写进他人会话。口径复用
     # api/conversations._scope（同一可见性只该有一套判据）；**存在但不可见=越权
     # 404，不存在=新建放行**（两段查询区分，避免误杀新会话首问）。
     if payload.conversation_id and identity is not None and identity.user_id:
         if not is_uuid(payload.conversation_id):
+            _note(404)
             return JSONResponse(status_code=404,
                                 content=error_body(EC_NOT_FOUND, "资源不存在"))
         from bidqa.application.chat import worker as worker_mod  # 与落库同源工厂（测试同缝）
@@ -70,10 +78,12 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
             if store.get_conversation(payload.conversation_id, viewer_user_id=viewer,
                                       machine_domain=machine) is None \
                     and store.get_conversation(payload.conversation_id) is not None:
+                _note(404)
                 return JSONResponse(status_code=404,
                                     content=error_body(EC_NOT_FOUND, "资源不存在"))
     from bidqa.application.chat.worker import ChatJob, ChatJobError, run_chat_job
 
+    _note(200)
     channel = SseChannel()
     trace_id = uuid.uuid4().hex[:12]  # 先于 job 生成：落库收尾结构与 SSE done 共用同一 id
     job = ChatJob(

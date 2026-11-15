@@ -117,6 +117,20 @@ def test_setup_log_buffer_idempotent_and_stderr_masked() -> None:
     assert "sk-abcd****abcd" in stream.getvalue()
 
 
+def test_mask_secrets_rules_beyond_sk() -> None:
+    """P2-39（审计）：mask_secrets 曾只有 sk- 一条规则——Bearer token / api_key= /
+    URL 内嵌凭据原样进日志环并经 /api/system/logs 回显（硬约束 6「先具体后通用」
+    实际只有一条具体规则）。"""
+    from bidqa.obs.logs import mask_secrets
+
+    text = mask_secrets("auth Bearer tok_abcd12345678 q=1 api_key=secvalue123456 "
+                        "url https://user:pa55w0rd@host/x")
+    assert "tok_abcd12345678" not in text  # Bearer token
+    assert "secvalue123456" not in text  # api_key=
+    assert "user:pa55w0rd@" not in text  # URL 凭据
+    assert "sk-abcd****abcd" == mask_secrets("sk-abcd1234567890abcd")  # 原规则不回归
+
+
 def test_lifespan_shutdown_runs_four_steps(monkeypatch, settings_factory) -> None:
     """P1-8：应用停机钩子四步的后三步——②SSE 广播（sse 单测覆盖）③runner/压缩
     池 cancel futures（close）④连接池关闭（docs/01 §6；①停收新请求是 uvicorn 的）。"""

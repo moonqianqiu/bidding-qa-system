@@ -59,14 +59,18 @@ def vision(payload: VisionRequest, request: Request,
            settings: Any = Depends(get_settings)) -> Any:
     from bidqa.obs.logs import note_request
 
-    note_request("/api/vision", 200)  # H2 行为计数
+    def _note(status: int) -> None:
+        note_request("/api/vision", status)  # P2-5：按真实状态码计数（原写死 200 在判定前）
+
     limiter, bucket = rate_identity(request, settings)  # 游客已被中间件 403 拦在前面
     allowed, retry_after = limiter.check(bucket)
     if not allowed:
+        _note(429)
         return rate_limited_429(retry_after)
     fields = (("image", payload.image), ("original", payload.original))
     oversize = [name for name, v in fields if v and len(v) > MAX_B64_CHARS]
     if oversize:  # 先挡体积再谈能力（传输层错误优先）
+        _note(413)
         return JSONResponse(
             status_code=413,
             content=error_body(EC_PAYLOAD_TOO_LARGE, "图片体积超限（base64 > 4M 字符）",
@@ -76,18 +80,24 @@ def vision(payload: VisionRequest, request: Request,
         data_url = _data_url(payload.image)
         original_url = _data_url(payload.original) if payload.original else None
     except Exception:
+        _note(400)
         return _bad([{"field": "image", "issue": "非法 base64"}])
     if payload.mode not in MODES:
+        _note(400)
         return _bad([{"field": "mode", "issue": "须为 auto/ocr/describe"}])
     if payload.mode == "ocr":
         if not settings.has_ocr:
+            _note(503)
             return degraded_503("ocr: OCR 槽位未配置（OCR_*）")
         if not payload.original:
+            _note(400)
             return _bad([{"field": "original", "issue": "mode=ocr 需要高分辨率原件"}])
     try:
         result = analyze_image(data_url, original_url, payload.mode)
     except VisionUnavailable as exc:
+        _note(503)
         return degraded_503(str(exc))
+    _note(200)
     ref = get_ref_store().put(result.text)
     return {"image_ref": ref, "description": result.text, "filename": payload.filename,
             "mode_used": result.mode_used, "route_by": result.route_by,
