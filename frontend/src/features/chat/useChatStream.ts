@@ -27,6 +27,7 @@ export function useChatStream(
 
   const abortRef = useRef<AbortController | null>(null);
   const requestSeqRef = useRef(0); // A8 请求序号：旧流事件不得覆盖新会话
+  const inFlightRef = useRef(false); // P0-6 同步闸门：streaming 是异步 state，图片解析窗口内闭包仍读到 false
   // WP3 打字机平滑：token/thinking 先入缓冲，rAF 合帧 flush（~30fps）。
   // 量测依据（2026-11-08）：后端 token 到达 p50=75ms 相对平滑，卡顿主因是每 token
   // 全量渲染；用户体系后会话改服务端主，localStorage 落盘逻辑整体移除。
@@ -75,7 +76,8 @@ export function useChatStream(
 
   const send = useCallback(
     async (text: string, imageRefs?: string[]) => {
-      if (!active || streaming) return;
+      if (!active || streaming || inFlightRef.current) return; // P0-6：同步闸门补 state 时窗
+      inFlightRef.current = true;
       const convoId = active.id;
       const requestSeq = ++requestSeqRef.current;
       const userMsg: ChatMessage = {
@@ -93,6 +95,7 @@ export function useChatStream(
       setStreaming(true);
       const guard = makeSeqGuard();
       const controller = new AbortController();
+      abortRef.current?.abort(); // P0-6：新流先断旧流（旧 fetch 不 abort 会在服务端跑完整轮）
       abortRef.current = controller;
       pendingRef.current = { content: "", thinking: "" }; // WP3：新流清缓冲
       startFlusher(convoId);
@@ -161,6 +164,7 @@ export function useChatStream(
           flushPending(convoId); // 收尾残余 flush（done/error 路径通常已 flush 空）
           setStreaming(false);
           abortRef.current = null;
+          inFlightRef.current = false; // P0-6：与本流配对释放
           // 流结束仍未 done/error（中断/断连）→ 标记保留（A8）
           patchLastAssistant(convoId, (m) =>
             m.done || m.error ? m : { ...m, interrupted: true, statusStage: undefined });

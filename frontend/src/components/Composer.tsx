@@ -83,7 +83,7 @@ export default function Composer({
           {t.examples.map((example) => (
             <button
               key={example}
-              disabled={disabled || streaming}
+              disabled={disabled || streaming || preparing} // preparing 并入（审计 P0-6：示例按钮曾绕过 submit 守卫）
               title={example} // 截断时悬浮看全文；点击仍发完整问题
               onClick={() => onSend(example)}
               className="max-w-full truncate rounded-full border border-line px-2.5 py-1 text-[11px] text-dim transition hover:border-sky-800 hover:text-sky-300 disabled:opacity-40"
