@@ -81,10 +81,18 @@ export default function Home() {
     window.location.assign("/login");
   }, []);
 
-  // A7 反馈：点赞/点踩 + 回传该轮来源 + 来源归属标记（G4 点踩必评）
+  // A7 反馈：点赞/点踩 + 回传该轮来源 + 来源归属标记（G4 点踩必评）。
+  // P1-23（审计）：question 取「该 assistant 前最近的 user 消息」（与回放侧
+  // storedToMessages 同口径）——原取全会话最后一个 user 问题，非最后一轮点踩必错配；
+  // 乐观置态失败回滚（原吞错后 UI 与服务端永久不一致）。
   const handleFeedback = useCallback(
     async (message: ChatMessage, rating: "up" | "down") => {
       if (!active) return;
+      const idx = active.messages.findIndex((m) => m.id === message.id);
+      const question = idx >= 0
+        ? [...active.messages.slice(0, idx)].reverse().find((m) => m.role === "user")?.content ?? ""
+        : "";
+      const prevRating = message.feedback ?? null;
       sessions.updateConvo(active.id, (c) => ({
         ...c,
         messages: c.messages.map((m) => (m.id === message.id ? { ...m, feedback: rating } : m)),
@@ -92,7 +100,7 @@ export default function Home() {
       try {
         await postFeedback({
           conversation_id: active.id,
-          question: [...active.messages].reverse().find((m) => m.role === "user")?.content ?? "",
+          question,
           rating,
           sources: (message.sources ?? []).map((s) => ({ id: s.id, title: s.title })),
           trace_id: message.done?.trace_id ?? "",
@@ -100,7 +108,11 @@ export default function Home() {
           answer: message.content,
         });
       } catch {
-        /* 反馈失败不阻塞界面 */
+        sessions.updateConvo(active.id, (c) => ({
+          ...c,
+          messages: c.messages.map((m) =>
+            m.id === message.id ? { ...m, feedback: prevRating } : m),
+        }));
       }
     },
     [active, sessions],
