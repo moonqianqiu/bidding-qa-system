@@ -74,6 +74,13 @@ export function useChatStream(
     }
   }, []);
 
+  // P1-24（审计）：卸载 cleanup——rAF 合帧循环只有流结束才停，401 跳登录/切路由时
+  // fetch 与 rAF 都泄漏、卸载后仍 setState。abort 中断保留语义（A8）已流正文不动。
+  useEffect(() => () => {
+    stopFlusher();
+    abortRef.current?.abort();
+  }, [stopFlusher]);
+
   const send = useCallback(
     async (text: string, imageRefs?: string[]) => {
       if (!active || streaming || inFlightRef.current) return; // P0-6：同步闸门补 state 时窗

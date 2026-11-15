@@ -24,7 +24,9 @@ export function useCapabilities(isGuest: boolean) {
       })
       .catch(() => setHealthOk(false));
     try {
-      setProviderState(localStorage.getItem("bidqa.provider") ?? "");
+      // P1-27（审计）：游客锁默认档——localStorage 里的偏好不得绕过（服务端门禁为
+      // 真源，此处双保险让 UI 与 payload 一致）
+      setProviderState(isGuest ? "" : localStorage.getItem("bidqa.provider") ?? "");
     } catch {
       /* 静默 */
     }

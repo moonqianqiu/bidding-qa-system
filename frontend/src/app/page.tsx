@@ -5,7 +5,7 @@
 // 主题 useTheme；侧栏/消息面板/用户区为展示件（features/chat/*）。
 // 用户体系（docs/01 §3.1）：会话「服务端主」；游客不调会话 API（纯内存，关页即失）。
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { clearAuth, getUser, setAuth, type AuthUser } from "@/lib/auth";
 import { getMe, logout, postFeedback } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -65,9 +65,15 @@ export default function Home() {
   const images = useImageAttachment();
   const { active } = sessions;
 
-  // v2.3 双通道：发送前先解析图片换 image_ref（失败=不带图继续，chip 留错态）
+  // v2.3 双通道：发送前先解析图片换 image_ref（失败=不带图继续，chip 留错态）。
+  // P1-26（审计）：await 期间用户可切换会话——targetId 先记录、醒来后对最新值校验
+  // （ref 读当前渲染值，避免旧闭包），已切走则丢弃本次发送（原写入旧会话）。
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = sessions.activeId;
   const handleSend = async (text: string) => {
+    const targetId = sessions.activeId;
     const ref = await images.prepareForSend(docMode);
+    if (targetId !== activeIdRef.current) return;
     await stream.send(text, ref ? [ref] : undefined);
   };
 

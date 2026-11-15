@@ -114,7 +114,7 @@ export function useChatSessions(authUser: AuthUser | null) {
       .then((r) => {
         setConvos((prev) => {
           const prevMap = new Map(prev.map((c) => [c.id, c]));
-          return r.conversations.map((s) => {
+          const merged = r.conversations.map((s) => {
             const local = prevMap.get(s.id);
             // 本地内存里有正文的（正在浏览/刚流完）保留本地 messages；否则惰性等点开再拉
             return local
@@ -122,6 +122,11 @@ export function useChatSessions(authUser: AuthUser | null) {
                   updatedAt: Date.parse(s.updated_at) || local.updatedAt }
               : toConversation(s);
           });
+          // P1-25（审计）：原整体替换——服务端暂缺的本地会话（newChat 后未落库/
+          // 落库竞争）被丢弃 → active 变 null、消息清空、输入丢失。合并策略保留本地独有会话在列首。
+          const serverIds = new Set(r.conversations.map((s) => s.id));
+          const localsOnly = prev.filter((c) => !serverIds.has(c.id));
+          return [...localsOnly, ...merged];
         });
       })
       .catch(() => {}); // 列表刷新失败不打断使用

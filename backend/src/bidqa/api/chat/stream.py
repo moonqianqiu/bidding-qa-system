@@ -56,9 +56,14 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
                             content=error_body(4091, conflict["message"],
                                                detail=conflict["detail"]))
 
+    # P1-27（审计）：游客锁默认档——provider 请求参数对游客一律忽略（localStorage
+    # 偏好曾绕过 UI 锁直传更贵命名档）。服务端是门禁真源；可用性检查也按有效档。
+    is_guest = bool(identity and identity.role == ROLE_GUEST)
+    effective_provider = None if is_guest else payload.provider
+
     # 前置可用性检查：该 provider 实际会用的聊天客户端缺失 → HTTP 5031
     # （口径与 worker 主路径一致：缺省/未知 provider 回主槽位；只配命名档不再误 5031）
-    if not chat_available(payload.provider):
+    if not chat_available(effective_provider):
         _note(503)
         return degraded_503("chat: 核心槽位未配置")
 
@@ -92,7 +97,7 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
         web_enabled=payload.web_enabled,
         thinking_enabled=payload.thinking_enabled,
         image_refs=payload.image_refs,
-        provider=payload.provider,
+        provider=effective_provider,  # P1-27：游客一律 None=主槽位
         lang=payload.lang,
         thinking_model=settings.CHAT_THINKING_MODEL,
         is_guest=bool(identity and identity.role == ROLE_GUEST),

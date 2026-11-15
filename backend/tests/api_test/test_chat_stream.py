@@ -683,6 +683,32 @@ def test_degrade_after_half_stream_emits_reset(settings_factory, monkeypatch):
     full = "".join(e.get("text", "") for e in events if e["type"] == "token")
     assert "降级全文。" in full
 
+def test_guest_provider_ignored_server_side(settings_factory, monkeypatch):
+    """P1-27（审计）：游客 provider 曾被透传——localStorage 偏好绕过 UI 锁直传
+    命名档（docs/02 A14 游客锁默认档）。服务端是门禁真源：游客一律主槽位。"""
+    from bidqa.auth.identity import Identity
+
+    seen: list[str | None] = []
+    chat = FakeChat(tools_script=[text_msg("答")])
+
+    def capture(provider):
+        seen.append(provider)
+        return chat
+
+    ident = Identity("guest", None, "guest", "tg-p27")
+    client2 = _armed_stream_client(settings_factory, monkeypatch, ident)
+    patch_service(monkeypatch, chat=chat, pg=RecordingPg())
+    monkeypatch.setattr(worker_mod, "build_chat_for", capture)  # 覆盖以捕获 provider
+    monkeypatch.setattr(availability_mod, "build_chat_for", capture)
+    history_mod.guest_history.clear()
+    try:
+        events = stream_events(client2, {"message": "问", "provider": "ghost-profile"},
+                               headers={"Authorization": "Bearer tg-p27"})
+        assert events[-1]["type"] == "done"
+        assert seen and all(p is None for p in seen),             f"游客 provider 应被服务端忽略，实际 {seen}（原透传=红）"
+    finally:
+        history_mod.guest_history.clear()
+
 
 def test_metrics_note_request_real_status(client, settings_factory, monkeypatch):
     """P2-5（审计）：note_request 曾在限流/幂等/5031 判定**之前**写死 200——
