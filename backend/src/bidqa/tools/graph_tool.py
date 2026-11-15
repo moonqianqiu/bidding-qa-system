@@ -7,20 +7,29 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from bidqa.database.neo4j import GRAPH_QUERY_TYPES, NeoClient
+from bidqa.tools.args_norm import normalize_choice
 from bidqa.tools.base import BaseTool, empty_result, tool_result
+
+# query_type 中文别名（与 db 工具枚举表不同名易混，别名按图谱六类给足）
+_QUERY_ALIASES = {
+    "供应商": "supplier_topn", "供应商TopN": "supplier_topn", "供应商分布": "supplier_topn",
+    "采购人": "purchaser_dist", "采购人分布": "purchaser_dist",
+    "标的物": "subject_freq", "标的物频次": "subject_freq",
+    "地区": "region_dist", "地区分布": "region_dist",
+    "金额": "amount_agg", "均价": "amount_agg", "金额分布": "amount_agg",
+    "趋势": "time_trend", "时间趋势": "time_trend",
+}
 
 
 class SearchGraphArgs(BaseModel):
-    query_type: str = Field(description="图谱查询类型枚举")
+    query_type: str = Field(description=f"图谱查询类型枚举：{'/'.join(GRAPH_QUERY_TYPES)}")
     entity: str | None = Field(default=None, max_length=100, description="实体名过滤（包含匹配）")
     top_n: int | None = Field(default=None, ge=1, le=100)
 
     @field_validator("query_type")
     @classmethod
     def _check_type(cls, v: str) -> str:
-        if v not in GRAPH_QUERY_TYPES:
-            raise ValueError(f"query_type 须为 {GRAPH_QUERY_TYPES}")
-        return v
+        return normalize_choice(v, GRAPH_QUERY_TYPES, _QUERY_ALIASES)
 
 
 class SearchGraphTool(BaseTool[SearchGraphArgs]):

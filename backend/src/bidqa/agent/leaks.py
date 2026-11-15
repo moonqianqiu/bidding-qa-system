@@ -25,6 +25,10 @@ def build_rules(tool_names: list[str]) -> list[tuple[str, re.Pattern[str]]]:
         ("rule3_fence", re.compile(rf"```(?:tool|json)\s[^\x00]*?\b(?:{names})\b[^\x00]*?```")),
         # ④<tool_call> 类标签
         ("rule4_tag", re.compile(r"</?tool_call>|</?function_call>")),
+        # ⑤DeepSeek 系 DSML 工具调用语法（2026-11-15 空回事故实测泄漏形态：
+        #   <｜DSML｜tool_calls>/<｜DSML｜invoke name=…>/<｜DSML｜parameter …>，
+        #   开闭标签均含 ｜DSML｜ 前缀；先具体后通用，只收实测形态）
+        ("rule5_dsml", re.compile(r"<｜/?DSML｜|</｜?DSML")),
     ]
 
 

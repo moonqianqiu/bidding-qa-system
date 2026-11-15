@@ -35,6 +35,22 @@ def test_rule4_tag() -> None:
     assert leaks.detect_leak("工具调用已记录在案", NAMES) is None
 
 
+def test_rule5_dsml() -> None:
+    """2026-11-15 空回事故实测泄漏形态（DeepSeek 系 DSML 特殊 token）。"""
+    leak = ('\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name="search_database">\n'
+            '<｜DSML｜parameter name="query_type" string="supplier_topn">')
+    assert leaks.detect_leak(leak, NAMES) == "rule5_dsml"
+    assert leaks.detect_leak(
+        "空调采购项目共 12 个，中标总额 1,004,150 元。", NAMES) is None
+
+
+def test_sanitize_strips_dsml() -> None:
+    dirty = '结论如下\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name="search_database">'
+    clean = leaks.sanitize(dirty, NAMES)
+    assert "DSML" not in clean
+    assert "结论如下" in clean
+
+
 def test_clean_text_passes_all_rules() -> None:
     assert leaks.detect_leak(
         "根据检索材料[1]，空调采购项目共 12 个，中标总额 660 万元。", NAMES) is None

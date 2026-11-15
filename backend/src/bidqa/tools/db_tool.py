@@ -8,11 +8,21 @@ from pydantic import BaseModel, Field, field_validator
 
 from bidqa.database.bp_repo import BpRepo
 from bidqa.database.bp_schema import QUERY_TYPES
+from bidqa.tools.args_norm import normalize_choice
 from bidqa.tools.base import BaseTool, empty_result, tool_result
+
+# query_type 中文别名（观测到的模型拼写 + 直觉叫法；前缀截断如 supplier_top
+# 由 args_norm 归一阶梯自纠，无需别名）
+_QUERY_ALIASES = {
+    "供应商": "supplier_topn", "供应商TopN": "supplier_topn", "中标人TopN": "supplier_topn",
+    "采购人": "purchaser_topn", "采购人TopN": "purchaser_topn",
+    "标的物": "subject_agg", "地区": "region_agg",
+    "趋势": "time_trend", "时间趋势": "time_trend", "明细": "detail_search",
+}
 
 
 class SearchDatabaseArgs(BaseModel):
-    query_type: str = Field(description="查询类型枚举")
+    query_type: str = Field(description=f"查询类型枚举：{'/'.join(QUERY_TYPES)}")
     keyword: str | None = Field(
         default=None, max_length=200,
         description="关键词过滤（全部查询类型生效）：对项目名/中标人/标的物/编号四列片段匹配，"
@@ -29,9 +39,7 @@ class SearchDatabaseArgs(BaseModel):
     @field_validator("query_type")
     @classmethod
     def _check_type(cls, v: str) -> str:
-        if v not in QUERY_TYPES:
-            raise ValueError(f"query_type 须为 {QUERY_TYPES}")
-        return v
+        return normalize_choice(v, QUERY_TYPES, _QUERY_ALIASES)
 
 
 class SearchDatabaseTool(BaseTool[SearchDatabaseArgs]):
