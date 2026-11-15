@@ -143,7 +143,11 @@ class Retriever:
         result = RetrievalResult(hits=hits[:top_k], kind=kind, rrf_k=rrf_k, mode=mode,
                                  elapsed_ms=int((time.perf_counter() - t0) * 1000),
                                  degraded=degraded)
-        self._cache.put(key, result)
+        if not degraded and hits:
+            # 只缓存成功结果（硬约束 2；审计 P1-10：降级/空结果曾无条件入缓存，
+            # 故障恢复后仍返旧结果）；存深拷贝隔离调用方变异（CRAG 就地 append
+            # degraded 曾把降级注记写进缓存）
+            self._cache.put(key, deepcopy(result))
         return result
 
     @staticmethod

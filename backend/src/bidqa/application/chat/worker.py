@@ -84,6 +84,7 @@ def run_chat_job(job: ChatJob, emit: EventFn) -> JobOutcome:
         return _run_main(job, emit)
     except Exception as exc:
         try:
+            emit("reset", {"reason": "agent_fallback"})  # P2-32：清空已流半截正文再降级（与 _stream_plain 断流即收口径对齐）
             result = direct_rag_answer(job.message, job.lang, job.image_refs,
                                        emit, str(exc), provider=job.provider)
             result.conversation_id = job.conversation_id
@@ -103,8 +104,10 @@ def _persist_degrade(job: ChatJob, result: LoopResult, t0: float) -> None:
             return
         stored_done = build_done(result, elapsed_ms=int((time.perf_counter() - t0) * 1000),
                                  trace_id=job.trace_id, provider=job.provider or "")
-        persist_result(build_conversation_store(), job.conversation_id, job.message,
-                       result, job.provider or "", "",
+        store = build_conversation_store()
+        _, _, prior_summary = load_history(store, job.conversation_id)  # P2-31：降级落库保留原滚动摘要（原硬编码 "" 会抹掉 C7 摘要）
+        persist_result(store, job.conversation_id, job.message,
+                       result, job.provider or "", prior_summary,
                        user_id=job.user_id, done=stored_done)
     except Exception as exc:
         logger.warning("降级回答落库失败 conv=%s: %s: %s",
@@ -161,4 +164,5 @@ def _run_main(job: ChatJob, emit: EventFn) -> JobOutcome:
     # C7 压缩延后：调用方在收尾事件投递之后执行（保持原时序，不阻塞 done）
     return JobOutcome(result=result,
                       compress=defer_compress(store, saved_id, chat, job.message,
-                                              result, prior_summary, history))
+                                              result, prior_summary, history,
+                                              user_id=job.user_id))

@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
@@ -60,10 +62,17 @@ def _compress_sync(chat: Any, prior_summary: str, new_items: list[dict]) -> str:
 
 def compress_history(chat: Any, items: list[dict], prior_summary: str = "",
                      conversation_id: str = "", timeout: float = COMPRESS_TIMEOUT) -> str | None:
-    """压缩入口。返回新摘要；任何失败/超时/不可用 → None（等同不开启）。"""
-    key = f"{conversation_id}|{len(items)}"
+    """压缩入口。返回新摘要；任何失败/超时/不可用 → None（等同不开启）。
+
+    缓存键内容寻址（审计 P1-11：原 (conversation_id, len(items)) 在历史窗口恒定后
+    失效——第 4 轮起 len 不再变，摘要永久冻结）：输入=items 全文 + prior_summary。
+    """
     if not items or chat is None:
         return None
+    payload = json.dumps({"s": prior_summary,
+                          "i": [(m.get("role"), m.get("content")) for m in items]},
+                         ensure_ascii=False)
+    key = f"{conversation_id}|{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
     if cached := _cache_get(key):
         return cached
     future: Future = _executor.submit(_compress_sync, chat, prior_summary, items)

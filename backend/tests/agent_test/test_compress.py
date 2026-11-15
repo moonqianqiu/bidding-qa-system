@@ -79,3 +79,54 @@ def test_lru_cache_hit() -> None:
     compress_history(chat, items, conversation_id="c5")
     compress_history(chat, items, conversation_id="c5")
     assert chat.calls == 1  # 第二次命中 LRU
+
+
+def test_cache_key_is_content_addressed() -> None:
+    """P1-11（审计）：键曾是 (conversation_id, len(items))——历史窗口恒 6 条后
+    第 4 轮起 len 不再变，摘要永久冻结（不同内容只调用 1 次模型）。改内容寻址后
+    同长不同内容必须真压缩。"""
+    compress._cache.clear()
+    chat = FastChat()
+    first = compress_history(chat, [{"role": "user", "content": "安徽空调有哪些？"},
+                                    {"role": "assistant", "content": "12 个。"}],
+                             prior_summary="", conversation_id="c6")
+    assert first
+    second = compress_history(chat, [{"role": "user", "content": "江苏电梯有哪些？"},
+                                     {"role": "assistant", "content": "8 个。"}],
+                              prior_summary=first, conversation_id="c6")
+    assert chat.calls == 2  # 同 len 不同内容：缓存不得命中（旧键下=1，红）
+
+
+def test_compress_after_done_preserves_provider_and_owner() -> None:
+    """P1-11（审计）+ P1-1 守卫配套：二次 upsert 曾用 provider="" 覆盖（命名档
+    选择丢失）且不带 user_id——owner 守卫下整条更新会被拒绝。"""
+    from bidqa.agent.loop import LoopResult
+    from bidqa.application.chat.history import compress_after_done
+
+    class FakeStore:
+        def __init__(self):
+            self.row = {"id": "c9", "title": "原标题", "provider": "deep",
+                        "user_id": "u9",
+                        "messages": {"schema_v": 2, "items": [
+                            {"role": "user", "content": "q"},
+                            {"role": "assistant", "content": "a"}]}}
+            self.upserts: list[dict] = []
+
+        def get_conversation(self, conv_id):
+            return self.row
+
+        def upsert_conversation(self, conv_id, title, messages, provider, user_id=None):
+            self.upserts.append({"title": title, "messages": messages,
+                                 "provider": provider, "user_id": user_id})
+            self.row = {**self.row, "title": title, "messages": messages,
+                        "provider": provider, "user_id": user_id}
+
+    compress._cache.clear()
+    store = FakeStore()
+    chat = FastChat()
+    compress_after_done(store, "c9", chat, "q", LoopResult(answer="a"),
+                        prior_summary="", history_items=[], user_id="u9")
+    assert chat.calls == 1
+    assert store.upserts and store.upserts[0]["provider"] == "deep"  # 原 provider 保留
+    assert store.upserts[0]["user_id"] == "u9"  # 归属保留（owner 守卫下必须同 owner）
+    assert store.upserts[0]["title"] == "原标题"

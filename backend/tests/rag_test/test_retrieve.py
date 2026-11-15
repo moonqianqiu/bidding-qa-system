@@ -107,3 +107,34 @@ def test_cache_deepcopy_with_none_score(hybrid_repo):
     r2 = r.retrieve("问题0")
     assert r1 is not r2 and r1.hits[0] is not r2.hits[0]
     assert r1.hits[0].score is None and r2.hits[0].score is None
+
+
+def test_crag_mutation_does_not_poison_cache(retriever):
+    """P1-10（审计）：put 曾存返回给调用方的同一对象——CRAG 就地 append degraded
+    会把降级注记写进缓存（复证：第二次检索带旧注记）。"""
+    r1 = retriever.retrieve("中标通知书效力如何？")
+    r1.degraded.append("crag_low_confidence(0.42<0.5): 无改写模型")  # 模拟 crag 就地改
+    r2 = retriever.retrieve("中标通知书效力如何？")
+    assert r2.degraded == []  # 缓存对象独立于调用方持有的引用
+
+
+def test_degraded_result_not_cached(retriever):
+    """P1-10（硬约束 2 只缓存成功结果）：降级结果不入缓存——embedding 故障恢复后
+    同问题必须重新真检索，绝不返回旧故障形态（bm25_fallback）。"""
+    from bidqa.clients.siliconflow import DataSourceError
+
+    calls = {"n": 0}
+
+    class FlakyEmbedding:
+        def embed_query(self, text: str):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise DataSourceError("embedding", "模拟故障")
+            return [1.0] + [0.0] * 1023, models.SparseVector(indices=[1], values=[1.0])
+
+    retriever.embedding = FlakyEmbedding()
+    r1 = retriever.retrieve("中标通知书效力如何？")
+    assert r1.mode == "bm25_fallback" and r1.degraded  # 首次降级
+    r2 = retriever.retrieve("中标通知书效力如何？")
+    assert calls["n"] == 2  # 恢复后重新真检索（若降级结果被缓存则不再调用=红）
+    assert r2.mode == "hybrid" and not r2.degraded

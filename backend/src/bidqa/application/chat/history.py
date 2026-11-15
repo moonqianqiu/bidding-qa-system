@@ -93,9 +93,11 @@ def persist_result(store: Any, conversation_id: str | None, question: str,
 
 def compress_after_done(store: Any, conv_id: str, chat: Any, question: str,
                         result: LoopResult, prior_summary: str,
-                        history_items: list[dict]) -> None:
+                        history_items: list[dict], user_id: str | None = None) -> None:
     """C7 压缩：在收尾事件之后执行（5s 限时，调用方负责限时），不拖慢收尾；
-    失败=等同不开启（契约）。"""
+    失败=等同不开启（契约）。二次 upsert 保留原行 provider（审计 P1-11："" 曾把
+    命名档选择覆盖丢失）并透传 user_id（P1-1 owner 守卫下必须同 owner 才能更新）。
+    """
     if store is None or chat is None:
         return
     try:
@@ -108,7 +110,9 @@ def compress_after_done(store: Any, conv_id: str, chat: Any, question: str,
             items2 = (row2.get("messages") or {}).get("items", [])
             store.upsert_conversation(conv_id, title_of(row2, question),
                                       {"schema_v": CONV_SCHEMA_V, "items": items2,
-                                       "summary": summary}, "")
+                                       "summary": summary},
+                                      str(row2.get("provider", "") or ""),
+                                      user_id=user_id)
     except Exception as exc:  # 压缩失败不影响问答，但要在日志留痕（v2.2：不再全静默）
         logger.warning("会话压缩失败 conv=%s: %s: %s", conv_id,
                        type(exc).__name__, str(exc)[:120])
@@ -116,10 +120,11 @@ def compress_after_done(store: Any, conv_id: str, chat: Any, question: str,
 
 def defer_compress(store: Any, conv_id: str, chat: Any, question: str,
                    result: LoopResult, prior_summary: str,
-                   history_items: list[dict]) -> Callable[[], None]:
+                   history_items: list[dict], user_id: str | None = None
+                   ) -> Callable[[], None]:
     """压缩延后闭包：编排层先投递收尾事件，再执行本闭包（保持原时序）。"""
     return lambda: compress_after_done(store, conv_id, chat, question, result,
-                                       prior_summary, history_items)
+                                       prior_summary, history_items, user_id)
 
 
 class GuestHistory:
