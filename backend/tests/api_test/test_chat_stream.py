@@ -562,3 +562,61 @@ def test_load_history_projects_binary_only():
     _, items1, _ = history_mod.load_history(RowPg(
         {"schema_v": 1, "items": [{"role": "user", "content": "q"}]}), "c1")
     assert items1 == [{"role": "user", "content": "q"}]
+
+
+def test_degrade_answer_persists_with_done(settings_factory, monkeypatch):
+    """降级直答对称落库：异常分支与主路径同构（done+ts 随 assistant item 落库，
+    刷新后降级回答不再整条消失）；段位标签保持降级两套口径（retrieve_ms）。"""
+    from bidqa.auth.identity import Identity
+
+    class BrokenChat(FakeChat):
+        def chat_tools(self, messages, tools, temperature=0.3):
+            raise DataSourceError("chat", "上游连接被重置")
+
+    ident = Identity("user", "22222222-2222-2222-2222-222222222224", "carol", "t-dg")
+    client2 = _armed_stream_client(settings_factory, monkeypatch, ident)
+    pg = RecordingPg()
+    patch_service(monkeypatch, chat=BrokenChat(plain_script=["依据材料[1]直答。"]), pg=pg)
+    conv = "22222222-2222-2222-2222-222222222224"
+    events = stream_events(client2, {"message": "中标通知书效力？", "conversation_id": conv},
+                           headers={"Authorization": "Bearer t-dg"})
+    done = events[-1]
+    assert done["type"] == "done"
+    assert "降级直答" in [e.get("stage") for e in events if e["type"] == "status"]
+    assert any(d.startswith("agent_fallback") for d in done["degraded"])
+    upsert = pg.upserts[-1]
+    items = upsert["messages"]["items"]
+    assert upsert["messages"]["schema_v"] == 2
+    assert [m["role"] for m in items] == ["user", "assistant"]
+    assert "done" not in items[0] and "ts" not in items[0]  # user item 二元不变
+    stored = items[-1]
+    assert stored["content"] == "依据材料[1]直答。" and stored["ts"] > 0
+    assert stored["done"]["trace_id"] == done["trace_id"]  # 与 SSE done 同 id（对账）
+    assert stored["done"]["elapsed_ms"] > 0
+    assert stored["done"]["sources"] == done["sources"]
+    assert "retrieve_ms" in stored["done"]["phase_times"]  # 降级两套段名不合并
+
+
+def test_guest_degrade_caches_history(settings_factory, monkeypatch):
+    """游客降级直答：仍不落库（诚实），但进进程内历史缓存（与主路径游客语义一致）。"""
+    from bidqa.auth.identity import Identity
+
+    class BrokenChat(FakeChat):
+        def chat_tools(self, messages, tools, temperature=0.3):
+            raise DataSourceError("chat", "上游连接被重置")
+
+    ident = Identity("guest", None, "guest", "t-gdg")
+    client2 = _armed_stream_client(settings_factory, monkeypatch, ident)
+    pg = RecordingPg()
+    patch_service(monkeypatch, chat=BrokenChat(plain_script=["依据材料[1]直答。"]), pg=pg)
+    conv = "11111111-1111-1111-1111-111111111112"
+    history_mod.guest_history.clear()
+    try:
+        events = stream_events(client2, {"message": "问1", "conversation_id": conv},
+                               headers={"Authorization": "Bearer t-gdg"})
+        assert events[-1]["type"] == "done"
+        assert pg.upserts == []  # 游客不落库（降级路径同样诚实）
+        assert history_mod.guest_history.load(conv) == [
+            {"role": "user", "content": "问1"}, {"role": "assistant", "content": "依据材料[1]直答。"}]
+    finally:
+        history_mod.guest_history.clear()

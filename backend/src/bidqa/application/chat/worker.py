@@ -9,6 +9,7 @@ ChatJob（api/chat/stream 负责把请求模型转成它），业务流程可脱
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 import time
 from typing import Any, Callable
 
@@ -27,6 +28,8 @@ from bidqa.tools.runner import ToolRunner
 from bidqa.clients.web_factory import build_web_clients
 
 EventFn = Callable[[str, dict[str, Any]], None]
+
+logger = logging.getLogger("bidqa.application.chat.worker")
 
 
 @dataclass
@@ -77,6 +80,7 @@ def shared_runner() -> ToolRunner:
 
 def run_chat_job(job: ChatJob, emit: EventFn) -> JobOutcome:
     """编排入口：主路径 → 失败降级直答 → 再败抛 ChatJobError（绝不挂死）。"""
+    t0 = time.perf_counter()  # 降级落库耗时口径起点（含主路径失败前的尝试时长，诚实全程）
     try:
         return _run_main(job, emit)
     except Exception as exc:
@@ -84,9 +88,28 @@ def run_chat_job(job: ChatJob, emit: EventFn) -> JobOutcome:
             result = direct_rag_answer(job.message, job.lang, job.image_refs,
                                        emit, str(exc), provider=job.provider)
             result.conversation_id = job.conversation_id
+            _persist_degrade(job, result, t0)  # 与主路径对称：降级回答同样可回放
             return JobOutcome(result=result)
         except Exception:
             raise ChatJobError(exc) from exc
+
+
+def _persist_degrade(job: ChatJob, result: LoopResult, t0: float) -> None:
+    """降级直答落库（与主路径同构，docs/01 §3.1）：游客进进程内缓存不落库；
+    普通用户落 PG，assistant item 附 build_done 收尾结构（刷新后可回放）。
+    持久化失败不抛（能力型）——降级回答已投递，落库尽力而为。"""
+    try:
+        if job.is_guest:
+            guest_history.append(job.conversation_id, job.message, result.answer)
+            return
+        stored_done = build_done(result, elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                                 trace_id=job.trace_id, provider=job.provider or "")
+        persist_result(build_conversation_store(), job.conversation_id, job.message,
+                       result, job.provider or "", "",
+                       user_id=job.user_id, done=stored_done)
+    except Exception as exc:
+        logger.warning("降级回答落库失败 conv=%s: %s: %s",
+                       (job.conversation_id or "")[:8], type(exc).__name__, str(exc)[:160])
 
 
 def _run_main(job: ChatJob, emit: EventFn) -> JobOutcome:
