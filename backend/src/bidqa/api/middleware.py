@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -68,8 +70,10 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         auth = request.headers.get("authorization", "")
 
-        # ① 机器主 token：管理员级（脚本/e2e 免登录；user_id=None=机器域）
-        if self.token and auth == f"Bearer {self.token}":
+        # ① 机器主 token：管理员级（脚本/e2e 免登录；user_id=None=机器域）。
+        # 常量时间比较（审计 P1-4）：该 token 语义=管理员级，== 比较存在时序侧信道。
+        if self.token and secrets.compare_digest(auth.encode("utf-8"),
+                                                 f"Bearer {self.token}".encode("utf-8")):
             request.state.identity = Identity(ROLE_ADMIN, None, MACHINE_USERNAME)
             return await call_next(request)
 
@@ -81,7 +85,13 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
 
         # ③ 用户体系 armed：sessions 解析会话身份
         store = build_users_store()
-        if store is None:  # PG 不可用：无法验证会话，放行（降级诚实，登录端点此时同样不可用）
+        if store is None:
+            # PG 不可用：无法验证会话与角色。普通路径降级放行（问答不依赖 PG 的
+            # 能力型语义不变，identity 显式置 None）；管理域必须拒——metrics/console
+            # 端点自身无身份检查，中间件是唯一门，fail-open 即管理员域裸奔（审计 P1-2）。
+            if any(path.startswith(p) for p in ADMIN_ONLY_PREFIXES):
+                return _forbidden("存储不可用，无法验证角色")
+            request.state.identity = None
             return await call_next(request)
         token = auth[7:].strip() if auth.startswith("Bearer ") else ""
         identity = store.resolve(token) if token else None

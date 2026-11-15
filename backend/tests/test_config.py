@@ -16,6 +16,18 @@ def test_core_ok_passes(settings_factory):
     settings_factory().validate_core()  # 不抛即通过
 
 
+def test_create_app_validates_core(settings_factory, monkeypatch):
+    """生产默认路径门禁（审计 P1-6）：`uvicorn bidqa.main:app` 走 create_app()
+    无参路径，必须过核心校验——不能绕过 `bidqa serve` 的配置门。显式传 Settings
+    的调用方（测试/嵌入式）自带配置责任，不强校验（health 降级用例依赖）。"""
+    import bidqa.main as main_mod
+
+    monkeypatch.setattr(main_mod, "get_settings",
+                        lambda: settings_factory(CHAT_API_KEY=""))
+    with pytest.raises(ConfigError):
+        main_mod.create_app()
+
+
 def test_capability_missing_degrades(settings_factory):
     s = settings_factory()
     assert not s.has_thinking

@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from bidqa.application.chat.online import record_feedback
-from bidqa.auth.identity import ROLE_ADMIN
+from bidqa.auth.identity import ROLE_ADMIN, ROLE_GUEST
 from bidqa.config import get_settings
 from bidqa.database.conversations import is_uuid
 from bidqa.database.factory import build_conversation_store, build_feedback_store
@@ -138,16 +138,29 @@ class FeedbackRequest(BaseModel):
 
 
 @router.post("/api/feedback")
-def create_feedback(payload: FeedbackRequest,
-                    settings: Any = Depends(get_settings)) -> dict[str, Any]:
+def create_feedback(payload: FeedbackRequest, request: Request,
+                    settings: Any = Depends(get_settings)) -> Any:  # 404/5031 分支返 JSONResponse
     fb = build_feedback_store()
     if fb is None:
         return _5031()
-    if payload.conversation_id and not is_uuid(payload.conversation_id):
-        return JSONResponse(status_code=404,
-                            content=error_body(EC_NOT_FOUND, "资源不存在"))
+    identity = getattr(request.state, "identity", None)
+    conv_id = payload.conversation_id
+    if identity is not None and identity.role == ROLE_GUEST:
+        conv_id = None  # 游客会话只在进程内：conv id 一律不落（防拿他人会话 id 伪造反馈/触发判分，审计 P1-1）
+    if conv_id:
+        if not is_uuid(conv_id):
+            return JSONResponse(status_code=404,
+                                content=error_body(EC_NOT_FOUND, "资源不存在"))
+        if identity is not None and identity.user_id is not None:
+            # 登录用户：归属校验与 GET 回查同口径（他人会话 404 不泄漏存在性）
+            store = build_conversation_store()
+            viewer, machine = _scope(request)
+            if store is not None and store.get_conversation(
+                    conv_id, viewer_user_id=viewer, machine_domain=machine) is None:
+                return JSONResponse(status_code=404,
+                                    content=error_body(EC_NOT_FOUND, "资源不存在"))
     feedback_id = fb.insert_feedback(
-        payload.conversation_id, payload.question, payload.rating,
+        conv_id, payload.question, payload.rating,
         [{"id": s.get("id"), "title": s.get("title", "")} for s in payload.sources],
         payload.trace_id)
     if payload.rating == "down":  # G4 点踩必评：忠实度单维（60s 去重；旁路不抛错）

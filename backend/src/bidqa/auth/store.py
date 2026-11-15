@@ -70,9 +70,14 @@ class UsersStore:
         return {"token": token, "username": username, "role": role}
 
     def resolve(self, token: str) -> Identity | None:
-        """token → 身份；过期（惰性删除）或所属用户被禁用 → None。"""
+        """token → 身份；过期（惰性删除）或所属用户被禁用 → None。
+
+        role 以 users 表实时值为准（审计 P1-3：sessions.role 是登录时快照，
+        降权后旧会话曾仍具 admin 权限直到 72h TTL）；游客行（user_id NULL）
+        无 users 行，沿用 sessions.role。"""
         row = self._conn().execute(
-            "SELECT s.role, s.user_id, s.expires_at, u.username, u.disabled "
+            "SELECT s.role, s.user_id, s.expires_at, u.username, u.disabled, "
+            "u.role AS user_role "
             "FROM sessions s LEFT JOIN users u ON u.id = s.user_id "
             "WHERE s.token = %s", (token,)).fetchone()
         if not row:
@@ -87,7 +92,8 @@ class UsersStore:
         if row.get("disabled"):
             return None
         user_id = row.get("user_id")
-        return Identity(role=row["role"],
+        role = (row.get("user_role") or row["role"]) if user_id else row["role"]
+        return Identity(role=role,
                         user_id=str(user_id) if user_id else None,
                         username=row.get("username") or ROLE_GUEST, token=token)
 

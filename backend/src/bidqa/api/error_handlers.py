@@ -7,7 +7,12 @@ FastAPI 处理器是 HTTP 适配层的职责——业务层 import errors 时不
 
 from __future__ import annotations
 
+import logging
+
+import psycopg
 from fastapi import FastAPI, Request
+
+logger = logging.getLogger("bidqa.api.error_handlers")
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -55,8 +60,18 @@ def install_error_handlers(app: FastAPI) -> None:
             headers=getattr(exc, "headers", None),
         )
 
+    @app.exception_handler(psycopg.Error)
+    async def on_pg_error(request: Request, exc: psycopg.Error) -> JSONResponse:
+        # PG 中途断连/不可用（resolve/login 等存储路径无 try/except 的兜底，审计 P1-2）：
+        # 契约要求 503/5031（数据源降级），此前落全局 500/5001
+        return JSONResponse(
+            status_code=503,
+            content=error_body(EC_SOURCE_DEGRADED, "postgres: 不可用"),
+        )
+
     @app.exception_handler(Exception)
     async def on_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("未分类服务端错误 path=%s", request.url.path)  # 带堆栈，可对账
         return JSONResponse(
             status_code=500,
             content=error_body(EC_INTERNAL, "未分类服务端错误"),

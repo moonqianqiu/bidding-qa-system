@@ -126,7 +126,12 @@ def _run_main(job: ChatJob, emit: EventFn) -> JobOutcome:
         history = guest_history.load(conv_id)
         prior_summary = ""
     else:
-        conv_id, history, prior_summary = load_history(store, job.conversation_id)
+        # 读侧可见域下推（审计 P1-1 纵深）：登录用户只读本人会话；机器 token/
+        # legacy（user_id None）不过滤（管理员级 + 无用户域）。fake store 桩是
+        # 单参签名，仅 user_id 存在时才传 viewer。
+        viewer = (job.user_id, False) if job.user_id else None
+        conv_id, history, prior_summary = load_history(store, job.conversation_id,
+                                                       viewer=viewer)
     loop = AgentLoop(chat, registry, shared_runner(), temperature=0.3)
     # 图片上下文只进模型、不落库（描述是 TTL 10min 的易逝旁路；会话存原始问题）
     question = job.message

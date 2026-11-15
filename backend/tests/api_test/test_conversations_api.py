@@ -132,6 +132,73 @@ def _armed(monkeypatch, settings_factory, ident):
     return TestClient(create_app(settings_factory(USERS_ENABLED="true")))
 
 
+def test_chat_stream_conversation_ownership(pg_client, settings_factory, monkeypatch) -> None:
+    """聊天主端点归属前置校验（审计 P1-1）：他人会话/机器域越权一律 404，
+    不把他人 messages/summary 注入模型上下文，也不把回答写进他人会话。"""
+    from bidqa.auth.identity import Identity
+
+    uid_a, uid_b = str(uuid.uuid4()), str(uuid.uuid4())
+    other, machine = str(uuid.uuid4()), str(uuid.uuid4())
+    ConversationStore(pg_client).upsert_conversation(other, "B的会话",
+                                  {"schema_v": 1, "items": []}, user_id=uid_b)
+    ConversationStore(pg_client).upsert_conversation(machine, "机器域会话", {"schema_v": 1, "items": []})
+    try:
+        client = _armed(monkeypatch, settings_factory,
+                        Identity("user", uid_a, "alice", "t-fixed"))
+        auth = {"Authorization": "Bearer t-fixed"}
+        for conv in (other, machine):  # 他人会话 + 机器域会话都不可达
+            r = client.post("/api/chat/stream", headers=auth,
+                            json={"message": "q", "conversation_id": conv,
+                                  "client_msg_id": str(uuid.uuid4())})
+            assert r.status_code == 404, f"conv={conv}: {r.status_code} {r.text[:120]}"
+            assert r.json()["error_code"] == 4041
+        # 本人不存在的新会话=可创建（放行进入 SSE）
+        r_ok = client.post("/api/chat/stream", headers=auth,
+                           json={"message": "q", "conversation_id": str(uuid.uuid4()),
+                                 "client_msg_id": str(uuid.uuid4())})
+        assert r_ok.status_code == 200
+    finally:
+        conn = pg_client.connection()
+        conn.execute("DELETE FROM conversations WHERE id::text = ANY(%s)",
+                     ([other, machine],))
+        pg_client.commit()
+
+
+def test_feedback_post_ownership(pg_client, settings_factory, monkeypatch) -> None:
+    """POST /api/feedback 归属校验（审计 P1-1）：他人会话 404（不可伪造 👍/👎）；
+    游客会话不在 PG（进程内历史）→ conversation_id 丢弃落 NULL，杜绝拿他人会话
+    id 伪造反馈/触发点踩判分。"""
+    from bidqa.auth.identity import Identity
+
+    uid_b = str(uuid.uuid4())
+    other = str(uuid.uuid4())
+    ConversationStore(pg_client).upsert_conversation(other, "B的会话",
+                                  {"schema_v": 1, "items": []}, user_id=uid_b)
+    try:
+        client = _armed(monkeypatch, settings_factory,
+                        Identity("user", str(uuid.uuid4()), "alice", "t-fixed"))
+        r = client.post("/api/feedback", headers={"Authorization": "Bearer t-fixed"},
+                        json={"conversation_id": other, "question": "q", "rating": "down",
+                              "trace_id": "it-fb-own"})
+        assert r.status_code == 404  # 他人会话不可伪造反馈
+
+        guest = _armed(monkeypatch, settings_factory,
+                       Identity("guest", None, "guest", "t-fixed"))
+        r2 = guest.post("/api/feedback", headers={"Authorization": "Bearer t-fixed"},
+                        json={"conversation_id": other, "question": "q", "rating": "down",
+                              "trace_id": "it-fb-guest"})
+        assert r2.status_code == 200  # 游客可反馈（点踩必评入口）
+        rows = pg_client.connection().execute(
+            "SELECT conversation_id FROM feedback WHERE trace_id = 'it-fb-guest'"
+        ).fetchall()
+        assert rows and rows[0]["conversation_id"] is None  # 游客 conv id 一律不落
+    finally:
+        conn = pg_client.connection()
+        conn.execute("DELETE FROM feedback WHERE trace_id LIKE 'it-fb-%'")
+        conn.execute("DELETE FROM conversations WHERE id::text = ANY(%s)", ([other],))
+        pg_client.commit()
+
+
 def test_scoping_isolation_through_endpoint(pg_client, settings_factory, monkeypatch) -> None:
     """普通用户 A/B 互不可见：list 过滤 + 越权 get/delete/rename 一律 404（不泄漏存在性）。"""
     from bidqa.auth.identity import Identity

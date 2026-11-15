@@ -445,7 +445,8 @@ class RecordingPg:
     def __init__(self):
         self.upserts: list[dict] = []
 
-    def get_conversation(self, conv_id):
+    def get_conversation(self, conv_id, viewer_user_id=None, machine_domain=False):
+        # 可见域参数随 P1-1 端点归属校验加入（恒 None=新会话，放行创建）
         return None
 
     def upsert_conversation(self, conv_id, title, messages, provider="", user_id=None):
@@ -535,7 +536,8 @@ def test_persist_attaches_done_for_restore(settings_factory, monkeypatch):
     assert stored["content"] == "依据材料[1]作答。" and stored["ts"] > 0
     assert stored["done"]["trace_id"] == done["trace_id"]  # 与 SSE done 同构（wiring 亦覆盖）
     assert stored["done"]["tool_name"] == "search_knowledge"
-    assert stored["done"]["rounds"] == done["rounds"] and stored["done"]["elapsed_ms"] > 0
+    assert stored["done"]["rounds"] == done["rounds"]
+    assert isinstance(stored["done"]["elapsed_ms"], int)  # 真实测量值（假模型可亚毫秒=0，不做 >0 脆断言）
     assert stored["done"]["sources"] == done["sources"]  # 逐条来源口径一致（含聚合口径条目）
 
 
@@ -592,7 +594,7 @@ def test_degrade_answer_persists_with_done(settings_factory, monkeypatch):
     stored = items[-1]
     assert stored["content"] == "依据材料[1]直答。" and stored["ts"] > 0
     assert stored["done"]["trace_id"] == done["trace_id"]  # 与 SSE done 同 id（对账）
-    assert stored["done"]["elapsed_ms"] > 0
+    assert isinstance(stored["done"]["elapsed_ms"], int)  # 真实测量值（假模型降级亚毫秒=0，不做 >0 脆断言）
     assert stored["done"]["sources"] == done["sources"]
     assert "retrieve_ms" in stored["done"]["phase_times"]  # 降级两套段名不合并
 

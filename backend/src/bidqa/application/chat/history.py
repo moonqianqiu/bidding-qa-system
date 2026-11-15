@@ -33,12 +33,22 @@ def title_of(row: dict | None, question: str) -> str:
     return (row or {}).get("title") or question[:30]
 
 
-def load_history(store: Any, conversation_id: str | None) -> tuple[str | None, list[dict], str]:
-    """加载会话（最近 N 轮 + 滚动摘要）；无 PG/无会话返回 (None, [], "")。"""
+def load_history(store: Any, conversation_id: str | None,
+                 viewer: tuple[str | None, bool] | None = None
+                 ) -> tuple[str | None, list[dict], str]:
+    """加载会话（最近 N 轮 + 滚动摘要）；无 PG/无会话返回 (None, [], "")。
+
+    viewer=(viewer_user_id, machine_domain) 时下推可见域（审计 P1-1 纵深）：
+    越权会话视同不存在（空历史，与端点前置校验双保险）；None=内部调用不过滤
+    （机器主 token 管理员级 / legacy 单机无用户域 / 测试桩单参签名兼容）。"""
     if not store or not conversation_id:
         return conversation_id, [], ""
     try:
-        row = store.get_conversation(conversation_id)
+        if viewer is not None:
+            row = store.get_conversation(conversation_id, viewer_user_id=viewer[0],
+                                         machine_domain=viewer[1])
+        else:
+            row = store.get_conversation(conversation_id)
     except Exception:
         return conversation_id, [], ""
     if not row:

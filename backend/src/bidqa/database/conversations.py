@@ -43,12 +43,15 @@ class ConversationStore:
 
     def upsert_conversation(self, conv_id: str, title: str, messages: dict,
                             provider: str = "", user_id: str | None = None) -> None:
-        """归属仅在 INSERT 时写入；已存在会话的 owner 不被更新覆盖。"""
+        """归属仅在 INSERT 时写入；ON CONFLICT 的 UPDATE 带 owner 守卫（审计 P1-1
+        存储层）：owner 不同的更新整条拒绝（回答/标题/provider 不得写进他人会话）；
+        NULL（机器域）行仅机器域可更新（NULL IS NOT DISTINCT FROM NULL=真）。"""
         self.connection().execute(
             "INSERT INTO conversations (id, title, messages, provider, user_id, updated_at) "
             "VALUES (%s, %s, %s, %s, %s, now()) "
             "ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, "
-            "messages = EXCLUDED.messages, provider = EXCLUDED.provider, updated_at = now()",
+            "messages = EXCLUDED.messages, provider = EXCLUDED.provider, updated_at = now() "
+            "WHERE conversations.user_id IS NOT DISTINCT FROM EXCLUDED.user_id",
             (conv_id, title, pg_json(messages), provider, user_id),
         )
         self.connection().commit()

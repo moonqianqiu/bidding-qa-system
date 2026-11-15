@@ -74,9 +74,9 @@ def _reset_caches():
         chat_factory.build_vision.cache_clear()
         chat_factory.build_ocr.cache_clear()
         chat_factory.clear_profile_chats()
-        db_factory.build_pg.cache_clear()
+        db_factory.clear_pg_cache()
         web_factory.build_web_clients.cache_clear()
-        auth_factory.build_users_store.cache_clear()
+        auth_factory.clear_users_store_cache()
 
     _clear()
     yield

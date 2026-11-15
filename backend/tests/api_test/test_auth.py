@@ -118,6 +118,31 @@ def test_legacy_mode_ignores_users_store(settings_factory, monkeypatch):
     assert store.logins == [] and not store.logged_out
 
 
+def test_pg_down_admin_domain_refused_403(settings_factory, monkeypatch):
+    """PG 不可用（store None）：管理域必须拒——无身份可判角色，admin 门禁失效
+    即越权面（审计 P1-2，metrics 端点自身无身份检查，中间件是唯一门）；普通路径
+    降级放行（问答不依赖 PG 的能力型降级语义不变）。"""
+    patch_store(monkeypatch, None)
+    client = TestClient(create_app(settings_factory(USERS_ENABLED="true")))
+    r = client.get("/api/system/metrics")
+    assert r.status_code == 403 and r.json()["error_code"] == 4031
+    assert client.get("/api/whatever").status_code == 404  # 4041=已进路由（放行）
+
+
+def test_machine_token_compare_digest_source_guard():
+    """机器主 token 常量时间比较（审计 P1-4）：== 比较存在时序侧信道，且该 token
+    语义为管理员级。源码守卫钉死 compare_digest 用法（行为测试测不出时序）。"""
+    import inspect
+
+    from bidqa.api import auth as auth_src
+    from bidqa.api import middleware as mw_src
+
+    for mod in (mw_src, auth_src):
+        src = inspect.getsource(mod)
+        assert "compare_digest" in src, f"{mod.__name__} 未用常量时间比较"
+        assert 'auth == f"Bearer {' not in src, f"{mod.__name__} 仍用 == 比较 token"
+
+
 # ── armed 模式：认证 ──
 def test_armed_bare_request_4011(settings_factory, monkeypatch):
     client = armed_client(monkeypatch, settings_factory, FakeUsersStore())

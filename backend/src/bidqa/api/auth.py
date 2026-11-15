@@ -7,6 +7,7 @@ login/guest/me 在中间件豁免清单（登录引导，未登录可访问）�
 
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -79,8 +80,9 @@ def me(request: Request, settings: Any = Depends(get_settings)) -> dict[str, Any
     auth = request.headers.get("authorization", "")
     token = auth[7:].strip() if auth.startswith("Bearer ") else ""
     identity: Identity | None = store.resolve(token) if token else None
-    if identity is None and settings.auth_enabled and auth == f"Bearer {settings.API_AUTH_TOKEN}":
-        identity = Identity(ROLE_ADMIN, None, MACHINE_USERNAME)  # 机器主 token 亦视为已登录
+    if identity is None and settings.auth_enabled and secrets.compare_digest(
+            auth.encode("utf-8"), f"Bearer {settings.API_AUTH_TOKEN}".encode("utf-8")):
+        identity = Identity(ROLE_ADMIN, None, MACHINE_USERNAME)  # 机器主 token 亦视为已登录（常量时间比较，审计 P1-4）
     if identity is not None:
         out.update({"authenticated": True, "username": identity.username,
                     "role": identity.role})

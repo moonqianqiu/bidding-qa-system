@@ -431,3 +431,96 @@ def test_reset_password_revokes_sessions(pg_client: PgConn) -> None:
                      "(SELECT id FROM users WHERE username LIKE 'IT-console-%')")
         conn.execute("DELETE FROM users WHERE username LIKE 'IT-console-%'")
         pg_client.commit()
+
+
+def test_resolve_uses_live_role(pg_client: PgConn) -> None:
+    """role 实时取库（审计 P1-3）：登录后角色被降级，旧会话即刻失权——
+    resolve 此前读 sessions.role 登录时快照，降权窗口长达会话 TTL（72h）。"""
+    from bidqa.auth.store import UsersStore
+
+    store = UsersStore(pg_client)
+    try:
+        store.create_user("IT-auth-role", "pw", "admin")
+        session = store.login("IT-auth-role", "pw", ttl_hours=1)
+        ident = store.resolve(session["token"])
+        assert ident is not None and ident.role == "admin"
+        pg_client.connection().execute(
+            "UPDATE users SET role = 'user' WHERE username = 'IT-auth-role'")
+        pg_client.commit()
+        ident2 = store.resolve(session["token"])
+        assert ident2 is not None and ident2.role == "user"  # 降权即刻生效
+    finally:
+        conn = pg_client.connection()
+        conn.execute("DELETE FROM sessions WHERE user_id IN "
+                     "(SELECT id FROM users WHERE username LIKE 'IT-auth-%')")
+        conn.execute("DELETE FROM users WHERE username LIKE 'IT-auth-%'")
+        pg_client.commit()
+
+
+def test_upsert_conflict_owner_guard(pg_client: PgConn) -> None:
+    """upsert ON CONFLICT 归属守卫（审计 P1-1 存储层）：owner 不同的更新整条拒绝
+    （title/messages/provider 均不动）——回答不得写进他人会话。同 owner 与机器域
+    （NULL）照常更新。"""
+    conv = str(uuid.uuid4())
+    uid_a, uid_b = str(uuid.uuid4()), str(uuid.uuid4())
+    try:
+        store = ConversationStore(pg_client)
+        store.upsert_conversation(conv, "A的", {"schema_v": 1, "items": []},
+                                  provider="p1", user_id=uid_a)
+        # 他人 upsert：整条拒绝（不带 WHERE 修正前会覆盖 title/messages/provider）
+        store.upsert_conversation(conv, "抢夺", {"schema_v": 2, "items": []},
+                                  provider="p2", user_id=uid_b)
+        row = store.get_conversation(conv)
+        assert row["title"] == "A的" and row["provider"] == "p1"
+        assert row["messages"]["schema_v"] == 1
+        # 同 owner 更新照常
+        store.upsert_conversation(conv, "A改", {"schema_v": 2, "items": []},
+                                  provider="p1", user_id=uid_a)
+        assert store.get_conversation(conv)["title"] == "A改"
+        # 机器域（NULL）：NULL owner 行可被机器域更新；机器域同样不得动他人行
+        machine_conv = str(uuid.uuid4())
+        store.upsert_conversation(machine_conv, "机器的", {"schema_v": 1, "items": []},
+                                  provider="", user_id=None)
+        store.upsert_conversation(machine_conv, "机器改", {"schema_v": 2, "items": []},
+                                  provider="", user_id=None)
+        assert store.get_conversation(machine_conv)["title"] == "机器改"
+        store.upsert_conversation(machine_conv, "A抢机器", {"schema_v": 3, "items": []},
+                                  provider="", user_id=uid_a)
+        assert store.get_conversation(machine_conv)["title"] == "机器改"  # 互为越权
+    finally:
+        conn = pg_client.connection()
+        conn.execute("DELETE FROM conversations WHERE id = ANY(%s)", ([conv, machine_conv],))
+        pg_client.commit()
+
+
+def test_build_pg_failure_not_cached_forever(monkeypatch) -> None:
+    """PG 首次构建失败不得永久缓存 None（审计 P1-2）：lru_cache 曾把「PG 暂时
+    不可达」钉死成「进程内永远不可用」，PG 恢复后不重启仍全量降级。负缓存只在
+    短窗口内抑制重试，窗口过后重连。"""
+    from bidqa.database import factory as db_factory
+
+    class FakeSettings:
+        has_postgres = True
+        POSTGRES_HOST = "127.0.0.1"
+        POSTGRES_PORT = 1
+        POSTGRES_DB = "db"
+        POSTGRES_USER = "u"
+        POSTGRES_PASSWORD = "p"
+
+    calls: list[int] = []
+
+    class FakeConn:
+        def __init__(self, *_a, **_k) -> None:
+            calls.append(1)
+
+        def ensure_schema(self) -> None:
+            raise RuntimeError("PG down")
+
+    monkeypatch.setattr(db_factory, "get_settings", lambda: FakeSettings)
+    monkeypatch.setattr(db_factory, "PgConn", FakeConn)
+    monkeypatch.setattr(db_factory, "_pg_cache", None)
+    monkeypatch.setattr(db_factory, "_pg_failed_at", 0.0)
+    assert db_factory.build_pg() is None
+    db_factory._pg_failed_at = 0.0  # 负缓存窗口已过
+    assert db_factory.build_pg() is None
+    assert len(calls) == 2  # 失败后窗口过仍会重试（lru_cache 一次失败永久 None=红）

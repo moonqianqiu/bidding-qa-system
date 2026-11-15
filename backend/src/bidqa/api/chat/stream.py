@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from bidqa.api.chat.guards import check_client_msg_id
 from bidqa.api.chat.schema import ChatStreamRequest
 from bidqa.api.chat.sse import SseChannel
+from bidqa.api.conversations import _scope
 from bidqa.api.deps import degraded_503, rate_limited_429
 from bidqa.api.ratelimit import rate_identity
 from bidqa.application.chat.availability import chat_available
@@ -25,7 +26,8 @@ from bidqa.application.chat.done import build_done_event as compose_done_event
 from bidqa.application.chat.online import record_chat_done
 from bidqa.auth.identity import ROLE_GUEST
 from bidqa.config import get_settings
-from bidqa.errors import EC_SOURCE_DEGRADED, error_body
+from bidqa.database.conversations import is_uuid
+from bidqa.errors import EC_NOT_FOUND, EC_SOURCE_DEGRADED, error_body
 
 router = APIRouter()
 
@@ -53,6 +55,23 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
         return degraded_503("chat: 核心槽位未配置")
 
     identity = getattr(request.state, "identity", None)
+    # 会话归属前置校验（审计 P1-1）：登录用户传他人会话 id 一律 4041——不把他人
+    # messages/summary 注入模型上下文，也不把回答写进他人会话。口径复用
+    # api/conversations._scope（同一可见性只该有一套判据）；**存在但不可见=越权
+    # 404，不存在=新建放行**（两段查询区分，避免误杀新会话首问）。
+    if payload.conversation_id and identity is not None and identity.user_id:
+        if not is_uuid(payload.conversation_id):
+            return JSONResponse(status_code=404,
+                                content=error_body(EC_NOT_FOUND, "资源不存在"))
+        from bidqa.application.chat import worker as worker_mod  # 与落库同源工厂（测试同缝）
+        store = worker_mod.build_conversation_store()
+        if store is not None:  # PG 不可用：跳过校验（问答能力型降级语义，与落库一致）
+            viewer, machine = _scope(request)
+            if store.get_conversation(payload.conversation_id, viewer_user_id=viewer,
+                                      machine_domain=machine) is None \
+                    and store.get_conversation(payload.conversation_id) is not None:
+                return JSONResponse(status_code=404,
+                                    content=error_body(EC_NOT_FOUND, "资源不存在"))
     from bidqa.application.chat.worker import ChatJob, ChatJobError, run_chat_job
 
     channel = SseChannel()

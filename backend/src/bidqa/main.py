@@ -17,7 +17,13 @@ APP_VERSION = "0.1.0"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    settings = settings or get_settings()
+    if settings is None:
+        # 生产默认路径门禁（审计 P1-6）：`uvicorn bidqa.main:app` 直拉同样过
+        # 核心校验与 workers=1 防呆，不得绕过 `bidqa serve`。
+        # 显式传 Settings 的调用方（测试/嵌入式）自带配置责任，不强校验——
+        # health 能力降级用例需要构造「核心缺失」的应用形态。
+        settings = get_settings()
+        settings.validate_core()
     app = FastAPI(title="bidqa", version=APP_VERSION)
     # 端点统一经 Depends(get_settings) 取配置；应用工厂注入时覆盖之，
     # 保证 create_app(自定义Settings) 的实例在所有端点生效（可测试性）。
