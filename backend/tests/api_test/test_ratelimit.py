@@ -105,3 +105,27 @@ def test_guest_bucket_independent_of_main():
     assert [glim.check(gbucket)[0] for _ in range(2)] == [True, True]
     assert glim.check(gbucket)[0] is False
     assert ulim.check(ubucket) == (True, 0)  # 主桶不受游客限流影响
+
+
+def test_get_guest_limiter_race_single_bucket() -> None:
+    """P2-34（审计）：判空→new→赋值无锁——冷启动并发可建多桶（配额被放大）。
+    双检锁后恒单桶。"""
+    import threading as _threading
+
+    from bidqa.api import ratelimit as rl
+
+    rl._guest_limiter = None
+    barrier = _threading.Barrier(8)
+    ids: set[int] = set()
+
+    def grab() -> None:
+        barrier.wait()
+        ids.add(id(rl.get_guest_limiter(10)))
+
+    ts = [_threading.Thread(target=grab, daemon=True) for _ in range(8)]
+    for x in ts:
+        x.start()
+    for x in ts:
+        x.join()
+    assert len(ids) == 1
+    rl._guest_limiter = None  # 复位

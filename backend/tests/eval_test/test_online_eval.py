@@ -192,3 +192,23 @@ def test_judge_async_bounded_queue_drops(tmp_path: Path, monkeypatch: pytest.Mon
     while len(processed) < online_mod.JUDGE_QUEUE_MAX and time.time() < deadline:
         time.sleep(0.01)
     assert len(processed) == online_mod.JUDGE_QUEUE_MAX  # 单 worker 全量消费
+
+
+def test_get_online_double_checked_lock():
+    """P1-20（审计）：get_online 判空→new→赋值无锁——并发首调可创建多实例
+    （多条 flush 线程并发写同一 jsonl）。双检锁后恒单例。"""
+    online_mod._instance = None
+    barrier = threading.Barrier(8)
+    ids: set[int] = set()
+
+    def grab() -> None:
+        barrier.wait()
+        ids.add(id(online_mod.get_online()))
+
+    ts = [threading.Thread(target=grab, daemon=True) for _ in range(8)]
+    for x in ts:
+        x.start()
+    for x in ts:
+        x.join()
+    assert len(ids) == 1
+    online_mod._instance = None  # 复位，避免跨用例持句柄

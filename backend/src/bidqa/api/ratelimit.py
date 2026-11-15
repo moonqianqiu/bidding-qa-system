@@ -66,6 +66,7 @@ class SlidingWindowLimiter:
 _limiter = SlidingWindowLimiter()
 _guest_limiter: SlidingWindowLimiter | None = None  # 游客独立桶（配额变更时重建）
 _guest_limit_at: int = -1
+_guest_lock = threading.Lock()
 
 
 def get_limiter() -> SlidingWindowLimiter:
@@ -73,11 +74,14 @@ def get_limiter() -> SlidingWindowLimiter:
 
 
 def get_guest_limiter(max_requests: int) -> SlidingWindowLimiter:
-    """游客桶：按 GUEST_RATE_LIMIT 惰性构建，配额变更（改配置/测试）即重建。"""
+    """游客桶：按 GUEST_RATE_LIMIT 惰性构建，配额变更（改配置/测试）即重建。
+    双检锁（审计 P2-34：判空→new→赋值无锁——冷启动并发可建多桶，配额被放大）。"""
     global _guest_limiter, _guest_limit_at
     if _guest_limiter is None or _guest_limit_at != max_requests:
-        _guest_limiter = SlidingWindowLimiter(max_requests=max_requests)
-        _guest_limit_at = max_requests
+        with _guest_lock:
+            if _guest_limiter is None or _guest_limit_at != max_requests:
+                _guest_limiter = SlidingWindowLimiter(max_requests=max_requests)
+                _guest_limit_at = max_requests
     return _guest_limiter
 
 

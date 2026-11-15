@@ -29,8 +29,19 @@ stop_pid_file() { # pidfile 名称 端口
   if [ "$(port_owner "$3")" != "$pid" ]; then
     echo "$2: pid $pid 存活但未持有 :$3（陈旧记录，不误杀；见残留检测）"; return
   fi
+  # 优雅先行（docs/01 §6 四步；审计 P1-8）：不带 //F 先发温和终止（Linux=SIGTERM；
+  # Windows 控制台进程常拒收 → 轮询窗口后强杀兜底）。应用侧 lifespan 四步
+  # （SSE 广播 → cancel futures → 关连接池）在任何优雅信号送达时完整生效。
+  taskkill //PID "$pid" >/dev/null 2>&1
+  for _ in $(seq 1 8); do
+    if ! win_alive "$pid"; then
+      echo "$2: 已优雅停止 (winpid $pid，属主校验通过)"
+      return
+    fi
+    sleep 1
+  done
   if taskkill //PID "$pid" //T //F >/dev/null 2>&1; then
-    echo "$2: 已停止 (winpid $pid，属主校验通过)"
+    echo "$2: 已停止 (winpid $pid，优雅窗口超时，强杀兜底)"
   elif powershell -NoProfile -Command "Stop-Process -Id $pid -Force" >/dev/null 2>&1; then
     # 受控环境（沙箱/加固策略）可能拦 tasklist/taskkill，PowerShell 兜底；失败不再假报成功
     echo "$2: 已停止 (winpid $pid，taskkill 被环境拦截，PowerShell 兜底)"

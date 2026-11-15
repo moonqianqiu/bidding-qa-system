@@ -68,14 +68,33 @@ def build_feedback_store() -> FeedbackStore | None:
     return FeedbackStore(conn) if conn is not None else None
 
 
-@lru_cache(maxsize=1)
+_neo_cache: NeoClient | None = None
+
+
 def build_neo() -> NeoClient | None:
     """Neo4j 连接（连通性失败=降级 None，health 如实显示）。"""
+    global _neo_cache
+    if _neo_cache is not None:
+        return _neo_cache
     s = get_settings()
     if not s.has_neo4j:
         return None
     client = NeoClient(s.NEO4J_URI, s.NEO4J_USER, s.NEO4J_PASSWORD)
-    return client if client.ping() else None
+    if not client.ping():
+        return None
+    _neo_cache = client
+    return client
+
+
+def close_pools() -> None:
+    """停机钩子（lifespan 四步④，审计 P1-8）：关闭进程内长连接（PG/Neo4j）。"""
+    global _pg_cache, _neo_cache
+    if _pg_cache is not None:
+        _pg_cache.close()
+        _pg_cache = None
+    if _neo_cache is not None:
+        _neo_cache.close()
+        _neo_cache = None
 
 
 @lru_cache(maxsize=1)

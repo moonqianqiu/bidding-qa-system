@@ -14,7 +14,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-RESULTS_DIR = Path("eval/results")
+BACKEND_DIR = Path(__file__).resolve().parents[3]  # backend/（src/bidqa/eval 上溯三级）
+RESULTS_DIR = BACKEND_DIR / "eval" / "results"  # 绝对锚定（P1-20/P1-33：相对 CWD 曾随启动目录分家）
 HIT_CAP_TARGET = 0.10  # hit_cap 率目标 <10%（docs/02 §0.1）
 
 
@@ -44,9 +45,12 @@ def snapshot_path(kind: str, judge: str) -> Path:
 
 def atomic_write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)  # 原子写
+    tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.tmp")  # pid 唯一：并发写同名不互踩（P1-20/P2-17）
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, path)  # 原子写
+    finally:
+        tmp.unlink(missing_ok=True)  # 成功后 tmp 已不存在；失败清理残留（P2-17）
 
 
 def precheck_tool_registry(cases: list[dict], loop: Any) -> None:

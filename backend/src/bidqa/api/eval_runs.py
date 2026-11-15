@@ -21,7 +21,8 @@ router = APIRouter()
 
 
 def _results_dir() -> Path:
-    return Path("eval/results")
+    # 绝对锚定（P1-20/P1-33）：相对 CWD 曾随启动目录分家（API 与 CLI 各看各的快照）
+    return Path(__file__).resolve().parents[3] / "eval" / "results"
 
 
 def _404() -> JSONResponse:

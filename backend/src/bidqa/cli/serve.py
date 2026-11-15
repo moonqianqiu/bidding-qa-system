@@ -16,5 +16,7 @@ def cmd_serve(args, settings: Any) -> int:
         return 2
     import uvicorn
 
-    uvicorn.run("bidqa.main:app", host=args.host, port=args.port, workers=1, log_level="info")
+    uvicorn.run("bidqa.main:app", host=args.host, port=args.port, workers=1,
+                log_level="info",
+                timeout_graceful_shutdown=10)  # 停机窗口：SSE 广播 error 后客户端有 10s 收尾（P1-8）
     return 0

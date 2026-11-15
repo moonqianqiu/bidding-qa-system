@@ -117,6 +117,27 @@ def test_setup_log_buffer_idempotent_and_stderr_masked() -> None:
     assert "sk-abcd****abcd" in stream.getvalue()
 
 
+def test_lifespan_shutdown_runs_four_steps(monkeypatch, settings_factory) -> None:
+    """P1-8：应用停机钩子四步的后三步——②SSE 广播（sse 单测覆盖）③runner/压缩
+    池 cancel futures（close）④连接池关闭（docs/01 §6；①停收新请求是 uvicorn 的）。"""
+    import bidqa.agent.compress as compress_mod
+    import bidqa.application.chat.worker as worker_mod
+    import bidqa.database.factory as db_factory
+
+    calls: list[str] = []
+
+    class SpyRunner:
+        def close(self) -> None:
+            calls.append("runner")
+
+    monkeypatch.setattr(worker_mod, "_shared_runner", SpyRunner())
+    monkeypatch.setattr(compress_mod, "close", lambda: calls.append("compress"))
+    monkeypatch.setattr(db_factory, "close_pools", lambda: calls.append("pools"))
+    with TestClient(create_app(settings_factory())):
+        pass  # 进入+退出触发 lifespan
+    assert calls == ["runner", "compress", "pools"]  # 顺序=四步的③④
+
+
 def test_eval_runs_list_and_detail(settings_factory, monkeypatch, tmp_path) -> None:
     import bidqa.api.eval_runs as mod
 

@@ -27,7 +27,7 @@ FLUSH_INTERVAL = 5.0
 BEHAVIOR_MAX = 2048  # 有界队列上限（满丢最旧）
 JUDGE_QUEUE_MAX = 8  # 判分队列容量即并发上限（硬约束 4；满即丢计数，绝不无限积压）
 DEDUP_WINDOW = 60.0
-RESULTS_DIR = Path("eval/results/online")
+RESULTS_DIR = Path(__file__).resolve().parents[3] / "eval" / "results" / "online"  # 绝对锚定（P1-20/P1-33）
 
 
 def _today() -> str:
@@ -204,10 +204,17 @@ _instance: OnlineEval | None = None
 _settings_cache: tuple[float, Any] | None = None
 
 
+_instance_lock = threading.Lock()
+
+
 def get_online() -> OnlineEval:
+    """双检锁单例（审计 P1-20：判空→new→赋值无锁——并发首调可创建多实例，
+    多条 flush 线程并发写同一 jsonl）。"""
     global _instance
     if _instance is None:
-        _instance = OnlineEval()
+        with _instance_lock:
+            if _instance is None:
+                _instance = OnlineEval()
     return _instance
 
 

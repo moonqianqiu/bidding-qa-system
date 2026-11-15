@@ -178,6 +178,8 @@ def test_write_snapshot_applies_rolling_retention(tmp_path, monkeypatch) -> None
     results.mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("bidqa.eval.agent_eval.RESULTS_DIR", results)
+    # retention 的扫描源在 ragas 模块——P1-20 绝对锚定后不再随 chdir 恰好对齐，须显式
+    monkeypatch.setattr("bidqa.eval.ragas.RESULTS_DIR", results)
     for i in range(100):  # 造满 100 个旧 agent 快照（mtime 递增）
         f = results / f"agent_20261101_{i:04d}_judge.json"
         f.write_text("{}", encoding="utf-8")
