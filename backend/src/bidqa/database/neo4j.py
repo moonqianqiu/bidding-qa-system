@@ -123,9 +123,12 @@ class NeoClient:
                 "RETURN sm.name AS label, count(p) AS projects, sum(p.amount) AS total_amount "
                 "ORDER BY projects DESC LIMIT $n", entity=entity or "", n=top_n)
         if query_type == "amount_agg":
+            # entity 过滤与金额条件合并 AND（审计 P1-14：原 entity_filter 自带 WHERE
+            # 又硬拼 WHERE → 双 WHERE Cypher 语法错，带过滤的均价查询 100% 不可用）
+            where = ("WHERE toLower(sm.name) CONTAINS toLower($entity) "
+                     "AND p.amount IS NOT NULL") if entity else "WHERE p.amount IS NOT NULL"
             return self.execute(
-                f"MATCH (sm:SubjectMatter)<-[:FOR]-(p:Project) {entity_filter} "
-                "WHERE p.amount IS NOT NULL "
+                f"MATCH (sm:SubjectMatter)<-[:FOR]-(p:Project) {where} "
                 "RETURN sm.name AS label, count(p) AS projects, avg(p.amount) AS avg_amount, "
                 "sum(p.amount) AS total_amount ORDER BY total_amount DESC LIMIT $n",
                 entity=entity or "", n=top_n)
@@ -156,10 +159,13 @@ class NeoClient:
                 "RETURN l.name AS label, count(p) AS projects, sum(p.amount) AS total_amount "
                 "ORDER BY projects DESC LIMIT $n", n=top_n)
         if query_type == "purchaser_dist":
+            # entity 片段过滤真实实现（审计 P1-15：原忽略 entity 静默返回全库榜——
+            # 工具描述承诺「按采购人名称片段过滤」而底层不兑现）
+            where = "WHERE toLower(pu.name) CONTAINS toLower($entity)" if entity else ""
             return self.execute(
-                "MATCH (pu:Purchaser)-[:PROCURED]->(p:Project) "
+                f"MATCH (pu:Purchaser)-[:PROCURED]->(p:Project) {where} "
                 "RETURN pu.name AS label, count(p) AS projects, sum(p.amount) AS total_amount "
-                "ORDER BY projects DESC LIMIT $n", n=top_n)
+                "ORDER BY projects DESC LIMIT $n", entity=entity or "", n=top_n)
         # time_trend：按月
         return self.execute(
             "MATCH (p:Project) WHERE p.publish_date IS NOT NULL "

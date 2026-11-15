@@ -38,9 +38,12 @@ class SearchGraphArgs(BaseModel):
         return normalize_choice(v, GRAPH_QUERY_TYPES, _QUERY_ALIASES)
 
     @model_validator(mode="after")
-    def _subject_supplier_needs_entity(self) -> "SearchGraphArgs":
-        # 与 neo4j.query 层同守卫（沿用 args+底层的双层校验模式，如 top_n）：
-        # args 层报错让模型零往返自纠，底层校验守住 ingest/cli 等其他调用方
+    def _entity_scope(self) -> "SearchGraphArgs":
+        # entity 语义按 query_type 收口（审计 P1-15：不支持而静默丢弃 = docs/01 §4.3
+        # 反模式——模型传了却拿全库榜）。args 层报错让模型零往返自纠，底层校验守住
+        # ingest/cli 等其他调用方（args+底层双层校验模式，同 top_n）。
+        if (self.entity or "").strip() and self.query_type in ("region_dist", "time_trend"):
+            raise ValueError(f"{self.query_type} 不支持 entity 过滤（地区/时间维度无实体参数）")
         if self.query_type == "subject_supplier" and not (self.entity or "").strip():
             raise ValueError("subject_supplier 须提供 entity（标的物片段）；"
                              "按供应商名找公司用 supplier_topn")

@@ -415,3 +415,30 @@ def test_build_graph_default_does_not_call_llm() -> None:
                          batch="bt", dry_run=True)
     assert result["normalize_calls"] == 0
     assert result["mapping_items"] == 0
+
+
+def test_query_entity_filters_amount_agg_and_purchaser(neo: NeoClient) -> None:
+    """审计 P1-14/P1-15：amount_agg+entity 曾生成双 WHERE Cypher 语法错（带过滤
+    的均价查询 100% 不可用）；purchaser_dist 曾完全忽略 entity（静默返回全库榜
+    ——工具描述承诺的能力底层不兑现）。"""
+    rows = neo.query("amount_agg", entity="IT-G空调", top_n=5)
+    assert rows and rows[0]["label"] == "IT-G空调"
+    assert int(rows[0]["avg_amount"]) == 660_000  # IT-G1 单项均价
+    rows2 = neo.query("purchaser_dist", entity="IT-G采购人", top_n=5)
+    assert [r["label"] for r in rows2] == ["IT-G采购人"]  # 过滤真实生效，非全库榜
+    assert int(rows2[0]["projects"]) == 2  # IT-G1/IT-G2 同采购人
+
+
+def test_graph_args_entity_scope_rejected() -> None:
+    """P1-15：不支持的 entity 组合显式拒绝（region_dist/time_trend 无实体语义）
+    ——参数静默丢弃是 docs/01 §4.3 反模式；支持面（purchaser 片段过滤）照常。"""
+    from pydantic import ValidationError
+
+    from bidqa.tools.graph_tool import SearchGraphArgs
+
+    with pytest.raises(ValidationError):
+        SearchGraphArgs(query_type="region_dist", entity="皖")
+    with pytest.raises(ValidationError):
+        SearchGraphArgs(query_type="time_trend", entity="空调")
+    ok = SearchGraphArgs(query_type="purchaser_dist", entity="医院")
+    assert ok.entity == "医院"
