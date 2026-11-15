@@ -100,7 +100,6 @@ def run_agent_eval(golden_path: str, loop_factory: Any, settings: Any) -> dict:
             "expected_tools": sorted(expected), "used_tools": sorted(used),
             "tool_hit": tool_hit, "clarify": result.clarify,
             "rounds": result.rounds, "hit_cap": result.hit_cap,
-            "answer_head": result.answer[:80],
             "sources": len(result.sources), "elapsed_ms": elapsed_ms,
             "pass": tool_hit,
         })
@@ -119,12 +118,15 @@ def run_agent_eval(golden_path: str, loop_factory: Any, settings: Any) -> dict:
         "latency_p95_ms": latencies[max(0, int(len(latencies) * 0.95) - 1)] if latencies else None,
         "env_link": "internal",  # 内部函数层（docs/01 §3.6）
     }
-    return {"kind": "agent", "env": {"link": "internal"},
+    return {"kind": "agent", "env": {"link": "internal",
+                                     "chat_model": (getattr(settings, "CHAT_MODEL", "") or "")},
             "summary": summary, "cases": results, "failed_cases": [
                 {"id": r["id"], "question": r["question"]} for r in results if not r["pass"]]}
 
 
 def write_snapshot(report: dict, settings: Any) -> Path:
+    from bidqa.eval.ragas import rolling_retention
     path = snapshot_path(report["kind"], judge_model_name(settings))
     atomic_write_json(path, report)
+    rolling_retention()  # agent 快照同样滚动保留（P1-18：原只在 rag 快照路径调用）
     return path

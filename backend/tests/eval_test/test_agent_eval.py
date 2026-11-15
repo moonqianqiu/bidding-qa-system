@@ -156,3 +156,37 @@ def test_load_golden_skips_blank() -> None:
     p = __import__("pathlib").Path(__import__("tempfile").mkstemp()[1])
     p.write_text(GOLDEN.strip() + "\n\n", encoding="utf-8")
     assert len(load_golden(str(p))) == 3
+
+
+def test_agent_snapshot_has_no_answer_text(tmp_path, monkeypatch) -> None:
+    """P2-18（§4.4 明令快照不落回答正文）：agent 快照 cases 曾带 answer_head
+    （正文前 80 字）并经 /api/eval/runs/{name} 原样返回。"""
+    golden = tmp_path / "agent_v0.jsonl"
+    golden.write_text(GOLDEN, encoding="utf-8")
+    report = run_agent_eval(str(golden), make_factory(FakeChat({})), settings=None)
+    assert all("answer_head" not in c for c in report["cases"])
+
+
+def test_write_snapshot_applies_rolling_retention(tmp_path, monkeypatch) -> None:
+    """P1-18：agent 快照从不清理——rolling_retention 只在 rag 快照写路径调用过。
+    收口后 write_snapshot 统一触发滚动保留。"""
+    import os
+
+    from bidqa.eval.agent_eval import write_snapshot
+
+    results = tmp_path / "eval" / "results"
+    results.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("bidqa.eval.agent_eval.RESULTS_DIR", results)
+    for i in range(100):  # 造满 100 个旧 agent 快照（mtime 递增）
+        f = results / f"agent_20261101_{i:04d}_judge.json"
+        f.write_text("{}", encoding="utf-8")
+        os.utime(f, (1_000_000 + i, 1_000_000 + i))
+    report = {"kind": "agent", "env": {"link": "internal"}, "summary": {}, "cases": []}
+
+    class S:
+        JUDGE_MODEL = ""
+
+    path = write_snapshot(report, S())
+    assert path.is_file()
+    assert len(list(results.glob("*.json"))) == 100  # 新快照入列，最旧的被滚出（原不清理=101，红）

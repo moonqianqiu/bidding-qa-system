@@ -41,15 +41,44 @@ def _eval_agent(args, _settings: Any) -> int:
         print(f"  [{mark}] {r['id']} {r['question'][:32]}{extra}")
     print(f"快照: {path}")
     summary = report["summary"]
-    ok = (summary["tool_selection_accuracy"] or 0) >= 0.9 \
-        and (summary["hit_cap_rate"] or 0) < 0.10 \
-        and (summary["clarify_trigger_rate"] in (None, 1.0))
+    # None=没测出 → 不通过（P2-15：`or 0` 曾把 hit_cap None 当 0 通过）
+    accuracy = summary["tool_selection_accuracy"]
+    hit_cap = summary["hit_cap_rate"]
+    ok = (accuracy is not None and accuracy >= 0.9
+          and hit_cap is not None and hit_cap < 0.10
+          and summary["clarify_trigger_rate"] in (None, 1.0))
     return 0 if ok else 1
+
+
+def _eval_rag(args, _settings: Any) -> int:
+    """G2 离线 RAGAS 评测 CLI 入口（审计 P1-19：原生产调用点为 0，5032 异源
+    门禁在命令行不可达）。⚠ 判分槽位收费（AGENTS 红线）：真跑批前向用户报价确认；
+    测试/开发一律注入 fake judge 或读离线缓存。"""
+    from bidqa.clients.chat_factory import build_chat
+    from bidqa.eval.ragas import run_rag_eval, write_rag_snapshot
+    from bidqa.rag.factory import build_retriever
+
+    chat = build_chat()
+    if chat is None:
+        print("主模型未配置（CHAT_*），无法运行 rag 评测", file=sys.stderr)
+        return 2
+    try:
+        report = run_rag_eval(args.golden, build_retriever(), chat, get_settings())
+    except Exception as exc:  # 5032 异源 / 判分未配置 → 拒跑，不产出误导分数
+        print(f"评测中止：{exc}", file=sys.stderr)
+        return 2
+    path = write_rag_snapshot(report, get_settings())
+    print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
+    avg = report["summary"].get("avg_score")
+    print(f"快照: {path}")
+    return 0 if avg is not None and avg >= 0.9 else 1
 
 
 def cmd_eval(args, _settings: Any) -> int:
     if args.mode == "agent":
         return _eval_agent(args, _settings)
+    if args.mode == "rag":
+        return _eval_rag(args, _settings)
     from bidqa.eval.smoke import run_smoke
     from bidqa.database.factory import build_repo
     from bidqa.rag.factory import build_retriever

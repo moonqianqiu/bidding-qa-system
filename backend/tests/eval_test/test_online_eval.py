@@ -121,15 +121,19 @@ def test_bounded_queue_drops_oldest(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_judge_starts_from_disk_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """在线判分先读离线判分缓存：同题同答缓存命中 = 0 次真调（审计 P0-4 重复烧钱）。"""
+    """在线判分先读离线判分缓存：同题同答同材料缓存命中 = 0 次真调（审计 P0-4）。
+    键=内容寻址 digest（P2-17）：sha1(cache_key|context)。"""
     _use_settings(monkeypatch, FakeSettings())
     monkeypatch.setattr("bidqa.eval.ragas.JUDGE_CACHE_DIR", tmp_path / "jc")
+    import hashlib
+
     from bidqa.eval.judge import judge_fingerprint
     from bidqa.eval.ragas import _cache_path
 
+    digest = hashlib.sha1(b"online|sampling|q|a|").hexdigest()[:12]  # context=""（sources 空）
     path = _cache_path(judge_fingerprint(FakeSettings()))
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"online|sampling|q|a": {"faithfulness": 1}}),
+    path.write_text(json.dumps({digest: {"faithfulness": 1}}),
                     encoding="utf-8")
     judge = FakeJudge()
     monkeypatch.setattr(online_mod, "_judge_client", lambda s: judge)

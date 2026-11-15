@@ -268,3 +268,42 @@ def test_ingest_graph_normalize_batch_unconfigured_returns_2(monkeypatch, capsys
     _patch_graph_deps(monkeypatch, captured)
     assert cli.main(["ingest", "graph", "--normalize", "--dry-run"]) == 2
     assert "SUBJECT_BATCH_API_KEY" in capsys.readouterr().err
+
+
+# ── 审计 P1-19/P2-15：rag CLI 模式 + 退出门禁的 None 口径 ──
+def test_eval_cli_accepts_rag_mode(monkeypatch, tmp_path, capsys):
+    """P1-19：G2 离线 RAGAS 曾无 CLI 入口（--mode 只有 smoke|agent）→
+    5032 异源门禁在命令行不可达。接线后 --mode rag 可达（fake 注入，不真跑判分）。"""
+    monkeypatch.setattr("bidqa.rag.factory.build_retriever", lambda: object())
+    monkeypatch.setattr("bidqa.clients.chat_factory.build_chat", lambda: object())
+    monkeypatch.setattr("bidqa.eval.ragas.run_rag_eval",
+                        lambda *a, **k: {"summary": {"avg_score": 0.9}, "cases": []})
+    monkeypatch.setattr("bidqa.eval.ragas.write_rag_snapshot",
+                        lambda *a, **k: tmp_path / "r.json")
+    assert cli.main(["eval", "--golden", str(tmp_path / "g.jsonl"), "--mode", "rag"]) == 0
+    assert "avg_score" in capsys.readouterr().out
+
+
+def test_eval_agent_gate_none_means_not_measured(monkeypatch, tmp_path, capsys):
+    """P2-15：CLI 门禁 `hit_cap or 0` 曾把 None（没测出）当通过；avg_score=0
+    （真零分）也不该被 or 链吞掉。None=不通过。"""
+    import types
+
+    import bidqa.container as container_mod
+    import bidqa.eval.agent_eval as agent_eval_mod
+
+    monkeypatch.setattr(container_mod, "build_agent_stack",
+                        lambda: (object(), object(), object()))
+    monkeypatch.setattr(agent_eval_mod, "write_snapshot",
+                        lambda *a, **k: tmp_path / "s.json")
+
+    def run(gate_summary):
+        monkeypatch.setattr(agent_eval_mod, "run_agent_eval", lambda *a, **k: gate_summary)
+        return cli.main(["eval", "--golden", str(tmp_path / "g.jsonl"), "--mode", "agent"])
+
+    assert run({"summary": {"total": 0, "tool_selection_accuracy": None,
+                            "hit_cap_rate": None, "clarify_trigger_rate": None},
+                "cases": []}) == 1  # 全 None=没测出 → 不通过
+    assert run({"summary": {"total": 33, "tool_selection_accuracy": 1.0,
+                            "hit_cap_rate": None, "clarify_trigger_rate": 1.0},
+                "cases": []}) == 1  # hit_cap None 曾 `or 0` → 误判通过（红）

@@ -67,11 +67,24 @@ def test_providers_never_leak_keys(settings_factory, monkeypatch) -> None:
     assert "api_key" not in json.dumps(body)  # 连字段名都不出现
 
 
-def test_eval_runs_404_gate(settings_factory) -> None:
-    """评测门关（默认）→ 整体 404（§3.1），不是空列表。"""
-    client = make_client(settings_factory)
-    assert client.get("/api/eval/runs").status_code == 404
-    assert client.get("/api/eval/runs/rag_x.json").status_code == 404
+def test_eval_runs_not_gated_by_online_flag(settings_factory, monkeypatch, tmp_path) -> None:
+    """P2-16 契约收口：离线快照是历史产物，不随 ONLINE_EVAL_ENABLED 关闭而 404
+    （原总开关把离线评测可见性连带吞掉）；在线评测统计在 metrics 的 online_eval
+    节由旗标门控。P2-15：avg_score=0（真零分）不得被 or 链回退吞掉。"""
+    import bidqa.api.eval_runs as mod
+
+    monkeypatch.setattr(mod, "_results_dir", lambda: tmp_path)
+    (tmp_path / "agent_x.json").write_text(json.dumps({
+        "kind": "agent", "env": {"link": "internal"},
+        "summary": {"total": 33, "tool_selection_accuracy": 1.0}}), encoding="utf-8")
+    (tmp_path / "rag_zero.json").write_text(json.dumps({
+        "kind": "rag", "env": {"link": "internal"},
+        "summary": {"total": 3, "avg_score": 0.0}}), encoding="utf-8")
+    client = make_client(settings_factory)  # ONLINE_EVAL_ENABLED=false（默认）
+    runs = {r["name"]: r for r in client.get("/api/eval/runs").json()["runs"]}
+    assert runs["agent_x.json"]["score"] == 1.0  # avg_score 缺失回退 tool_selection_accuracy
+    assert runs["rag_zero.json"]["score"] == 0.0  # 真零分不被回退（原 `or` 链吞掉=红）
+    assert client.get("/api/eval/runs/agent_x.json").status_code == 200
 
 
 def test_eval_runs_list_and_detail(settings_factory, monkeypatch, tmp_path) -> None:

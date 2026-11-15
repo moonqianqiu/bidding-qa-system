@@ -1,7 +1,8 @@
-"""G5 评测快照 API（docs/01 §3.1）：GET /api/eval/runs[/{name}]；实时统计 /api/eval/live。
+"""G5 评测快照 API（docs/01 §3.1）：GET /api/eval/runs[/{name}]。
 
-EVAL 门=ONLINE_EVAL_ENABLED（§3.1 的 EVAL_ENABLED 语义）：关闭时整体 404（不假装空列表）。
-快照目录 eval/results/（命名规范按文件名排序=按时间）。
+离线快照是历史产物，**不随 ONLINE_EVAL_ENABLED 关闭而 404**（P2-16 契约收口，
+空目录=空列表）；在线评测的实时统计在 /api/system/metrics 的 online_eval 节，
+由旗标门控。快照目录 eval/results/。
 """
 
 from __future__ import annotations
@@ -29,19 +30,20 @@ def _404() -> JSONResponse:
 
 @router.get("/api/eval/runs")
 def list_runs(settings: Settings = Depends(get_settings)) -> Any:
-    if not settings.ONLINE_EVAL_ENABLED:  # 评测门：关=整体 404（§3.1）
-        return _404()
     files = sorted(_results_dir().glob("*.json"))
     runs = []
     for path in files:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             summary = data.get("summary", {})
+            score = summary.get("avg_score")  # P2-15：avg_score=0（真零分）不被 or 链回退吞掉
+            if score is None:
+                score = summary.get("tool_selection_accuracy")
             runs.append({
                 "name": path.name,
                 "kind": data.get("kind", ""),
                 "total": summary.get("total"),
-                "score": summary.get("avg_score") or summary.get("tool_selection_accuracy"),
+                "score": score,
                 "hit_cap_rate": summary.get("hit_cap_rate"),
                 "link": (data.get("env") or {}).get("link", ""),
             })
@@ -52,8 +54,6 @@ def list_runs(settings: Settings = Depends(get_settings)) -> Any:
 
 @router.get("/api/eval/runs/{name}")
 def get_run(name: str, settings: Settings = Depends(get_settings)) -> Any:
-    if not settings.ONLINE_EVAL_ENABLED:
-        return _404()
     if "/" in name or ".." in name or not name.endswith(".json"):
         return _404()  # 非法标识一律 4041
     path = _results_dir() / name

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -65,7 +66,10 @@ def judge_dim(judge: ChatClient, dim: str, question: str, answer: str,
     旧缓存文件里被 None 污染的题，下次判分自然覆盖（审计 P0-4：缓存 None 曾让
     该题此后永久 null 不再判）。
     """
-    cached = cache.get(cache_key, {}).get(dim)
+    # 缓存键内容寻址（审计 P2-17）：原键只含 question+answer 前缀——同问同答不同
+    # 材料（faithfulness 依赖 context）命中同一缓存=判分失真。digest 统一用于查与存。
+    digest = hashlib.sha1(f"{cache_key}|{context}".encode("utf-8")).hexdigest()[:12]
+    cached = cache.get(digest, {}).get(dim)
     if cached is not None:
         return int(cached)
     try:
@@ -77,7 +81,7 @@ def judge_dim(judge: ChatClient, dim: str, question: str, answer: str,
     except Exception:
         score = None
     if score is not None:
-        cache.setdefault(cache_key, {})[dim] = score
+        cache.setdefault(digest, {})[dim] = score
     return score
 
 
@@ -115,7 +119,7 @@ def run_rag_eval(golden_path: str, retriever: Retriever, chat: ChatClient,
         scored = [v for v in dims.values() if v is not None]
         results.append({
             "id": case["id"], "question": question,
-            "answer_head": answer[:80], "sources": len(retrieval.hits),
+            "sources": len(retrieval.hits),
             "mode": retrieval.mode,
             "dims": dims,
             "score": round(sum(scored) / len(scored), 3) if scored else None,  # null=没测出
@@ -129,8 +133,9 @@ def run_rag_eval(golden_path: str, retriever: Retriever, chat: ChatClient,
         "avg_score": (round(sum(r["score"] for r in scored_results) / len(scored_results), 4)
                       if scored_results else None),  # null≠0
         "dims_avg": {
-            dim: (round(sum(r["dims"][dim] for r in results if r["dims"][dim] is not None)
-                        / max(1, sum(1 for r in results if r["dims"][dim] is not None)), 4))
+            dim: (round(sum(vals) / len(vals), 4)
+                  if (vals := [r["dims"][dim] for r in results
+                               if r["dims"][dim] is not None]) else None)  # 空集=None 没测出，绝不记 0（P1-17）
             for dim in ("faithfulness", "relevancy", "context_relevancy")
         },
         "env": {"judge": list(judge_fp), "self_judged": False, "link": "internal"},
@@ -151,8 +156,10 @@ def write_rag_snapshot(report: dict, settings: Any) -> Path:
 
 
 def rolling_retention(keep: int = SNAPSHOT_KEEP) -> int:
-    """G5：快照滚动保留最近 N 个（按文件名排序=按日期命名规范）。"""
-    files = sorted(p for p in RESULTS_DIR.glob("*.json") if p.is_file())
+    """G5：快照滚动保留最近 N 个（按 mtime 排序——文件名前缀不同（agent_/rag_/smoke_）
+    时字典序≠时间序，按名删会先删光整类快照，审计 P1-18）。"""
+    files = sorted((p for p in RESULTS_DIR.glob("*.json") if p.is_file()),
+                   key=lambda p: p.stat().st_mtime)
     removed = 0
     for path in files[:-keep] if len(files) > keep else []:
         path.unlink()
