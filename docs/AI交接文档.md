@@ -21,7 +21,7 @@
 | 类型检查 | pyrefly **49**（基线 56；bad-override ×5 + missing-attribute ×3 已清零，余为 psycopg 行类型噪音） | `uv run --with pyrefly pyrefly check src` |
 | 前端类型 | 绿（`npm run build` 五路由全预渲染） | `cd frontend && npm run build` |
 | e2e 三走向 | `--mutation-check` 免费自证 PASS；真跑调主模型（付费，跑前看 §3 成本） | `bash deploy/e2e-chat.sh --mutation-check` |
-| Agent 评测 | 13/13 工具选择 1.0（旧快照口径；golden 2026-11-15 扩至 **14 例**且 ag-009 改双渠道预期——见 §3 重跑行，重跑前勿引用旧口径对比） | `uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent` |
+| Agent 评测 | golden 2026-11-15 扩至 **33 例**；旧「13/13」快照口径已作废，**重跑待用户批准付费**（跑前看 §3 成本口径；~33 例×典型 2 轮 ≈ 60-130 次主模型调用） | `uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent` |
 | 图谱归一 | v2.1 完成：curated 映射 **9 项合并**（Purchaser 3504→3495，其余五类不变）；合并实体项目数守恒 PASS；分支/校区/附属误并候选全部未合并 | `python ../data/run/kg_acceptance.py` |
 | 产品定位 | **练习版**（老师评估 + 甲方验收双门槛），PRD 逐项对照 = docs/03 附录B | —— |
 | 旧仓 | `D:/.../bidding-qa-system` **冻结存档**（原地冻结+README 退役声明；数据副本保留），哈希只对应旧历史 | — |
@@ -35,7 +35,7 @@
 | v2.3 双通道付费验收 | ✅ 2026-11-15 三 PASS | 文档图 auto→OCR（PaddleOCR-VL-1.5 原件逐字提取，编号/金额全对）、图表图 auto→describe（远端多模态 Qwen3.8-27B 结构化描述准确）、带图提问 3.8s 直答并引用 BZGY2023CG141 与 ¥12,500,000.00；过程与教训见开发日志 11-15 行。**vision 槽位现为用户定版远端多模态 Qwen3.8-27B（llama.cpp，.env 模型 id 未变）**；OCR=SiliconFlow PaddleOCR-VL-1.5 |
 | 会话回放 + UI 输入条轮 | ✅ 2026-11-15 | 会话落库 **schema_v 2**：assistant item 附 done 收尾结构+ts，刷新后来源/工具/图表/耗时/trace 全回放（f36ea36；v1 旧行兼容=仅正文；load_history 投影二元防漏进上下文；真机三态验证过）。UI 输入条扁平化+多行自动长高封顶 128px+右侧按钮纵向叠放+退出登录明确按钮（0378692/c123eb3） |
 | CI / 私有远端 | P0 工程化（用户拍板：以后再弄） | 新仓 `git remote -v` 为空——建私有库 `git remote add origin <url> && git push origin main --tags` |
-| agent 评测快照重跑 | 付费决策 | golden 2026-11-15 扩至 14 例（ag-009 双渠道 ANY-of + ag-014 subject_supplier 新意图）；图谱第 7 类查询 `subject_supplier` 已上线——重跑评测（付费，主模型调用）后旧「13/13」口径作废 |
+| agent 评测快照重跑 | ⚠️ golden 已扩至 **33 例**（ag-015~033，2026-11-15），**等用户批准付费后重跑** | db +8（subject/purchaser×2/detail×2/region/trend/supplier）、graph +11（七类覆盖，图谱点名钉 graph、中性表述 ANY-of 双渠道）；闸门预校验 PASS（澄清不误触发）；重跑口径见 §2「Agent 评测」行，跑前报价确认 |
 | `detail_search` 金额排序 | ✅ 2026-11-15 | `order_by`（amount_desc/asc + 中文别名容错归一）仅 detail_search 支持，`ORDER BY award_amount … NULLS LAST`（金额取不到沉底）；聚合/趋势固定口径拒绝（args + bp_query 双层）；真机三态核对 PASS |
 | 会话回放两债 | ✅ 2026-11-15 两债全清 | ①降级直答落库（efbbb4e）：worker 异常分支对称持久化——游客进 guest_history、普通用户附 done 落 PG，刷新后降级回答不再整条消失；②反馈态回查（A7 债②）：`GET /api/conversations/{id}/feedback`（同问题取最新）+ 前端 openConversation 并联回查映射 message.feedback，👍/👎 刷新还原 |
 | 离群值溯源 | 数据排查 | 66 亿（涡阳 BZGY2023CG141）/ 23.7 亿 全局头部可疑值，源 xlsx 不可考——需与甲方核对源表 |
