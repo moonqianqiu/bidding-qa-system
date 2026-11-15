@@ -185,7 +185,10 @@ def test_clarify_gate_triggers_deterministically() -> None:
     r = loop.run("中标金额总共多少？", on_event=rec)
     assert r.clarify is True
     assert r.answer == "请补充地区与时间范围"
-    assert r.tool_called is False  # 不检索不生成（未走工具轨迹）
+    # 动态追问经工具（P0-2 契约收口）：tool_called=True + 轨迹只含澄清工具
+    # （「不检索不生成」的语义=不碰取数工具，原断言 tool_called=False 编码的是死逻辑行为）
+    assert r.first_tool == "ask_clarification"
+    assert all(c["name"] == "ask_clarification" for tr in r.tool_trace for c in tr)
     assert "向您确认" in [p.get("stage") for k, p in rec.events if k == "status"]
     assert r.phase_times.get("澄清提问") == 0
 
@@ -336,7 +339,9 @@ def test_english_clarify_question_when_lang_en() -> None:
     r = loop.run("有多少个中标项目？", lang="en")
     assert r.clarify is True
     assert r.answer.startswith("To answer accurately")
-    assert "ask_clarification" in str(chat.calls) or True  # 话术来自兜底路径
+    # 话术来自兜底路径：澄清工具确实被递给了模型（原恒绿 `or True` 掩盖 P0-2）
+    assert any("ask_clarification" in str(c.get("tools"))
+               for c in chat.calls if c["kind"] == "tools")
 
 
 def test_english_empty_answer_fallback() -> None:
@@ -425,6 +430,20 @@ def test_leak_recovery_respects_mounted_subset() -> None:
     names = [t["function"]["name"] for t in recoveries[0]["tools"]]
     assert "search_web" not in names  # 续写口径 = 挂载子集
     assert "search_knowledge" in names
+
+
+def test_clarify_via_tool_records_contract_fields() -> None:
+    """C5/D6 动态追问（审计 P0-2）：模型经 ask_clarification 工具追问 → 动态话术
+    + 契约字段落位（first_tool/tool_trace——done.tool_name 由此可对账）。原实现
+    澄清工具生产未注册，此路径不可达，固定话术 100% 兜底。"""
+    chat = FakeChat(tools_script=[tool_msg("ask_clarification",
+                                           {"question_for_user": "请问需要哪个地区与时间范围？"})])
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
+    r = loop.run("中标金额总共多少？")  # 无限定数字题 → C5 澄清闸门
+    assert r.clarify is True
+    assert r.answer == "请问需要哪个地区与时间范围？"
+    assert r.first_tool == "ask_clarification"
+    assert r.tool_trace and r.tool_trace[0][0]["name"] == "ask_clarification"
 
 
 def test_hallucinated_unmounted_tool_not_executed_via_fc() -> None:

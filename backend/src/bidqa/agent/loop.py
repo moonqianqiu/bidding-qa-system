@@ -208,6 +208,14 @@ class AgentLoop:
                     text = str(args.get("question_for_user", "")).strip()
                     if len(text) >= 2:
                         question = text
+                        # 动态追问走了工具：契约字段落位（docs/01 §3.4 tool_name；
+                        # 审计 P0-2——原路径不可达，固定话术 100% 兜底）
+                        result.tool_called = True
+                        if not result.first_tool:
+                            result.first_tool = "ask_clarification"
+                        result.tool_trace.append([{
+                            "name": "ask_clarification",
+                            "arguments": args if isinstance(args, dict) else {}}])
                 except json.JSONDecodeError:
                     pass
                 break

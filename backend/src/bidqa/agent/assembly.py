@@ -16,6 +16,7 @@ from typing import Any
 
 from bidqa.clients.tavily import web_cache
 from bidqa.tools.base import ToolRegistry
+from bidqa.tools.clarify import AskClarificationTool
 from bidqa.tools.db_tool import SearchDatabaseTool
 from bidqa.tools.graph_tool import SearchGraphTool
 from bidqa.tools.knowledge import SearchKnowledgeTool
@@ -25,12 +26,15 @@ SCHEMA_V = 1
 
 
 def build_registry(retriever, chat, bp, neo, web_clients: dict, reranker) -> ToolRegistry:
-    """按可用组件装配四件套工具表（能力缺失 = 不注册该工具，health/评测同口径）。
+    """按可用组件装配工具表（能力缺失 = 不注册该工具，health/评测同口径）。
 
     retriever/bp/neo/web_clients 允许 None/空 dict（对应能力降级）；chat 由调用方
     判空（无主模型时整条问答路径不可用，不是「少一个工具」）。
+    ask_clarification 无条件注册（审计 P0-2：原生产注册表从未注册，C5 动态追问/
+    D6 分支/tool_name=ask_clarification 全是死逻辑）——首轮挂载由 mount_tools 门控。
     """
     registry = ToolRegistry()
+    registry.register(AskClarificationTool())
     if retriever is not None:
         registry.register(SearchKnowledgeTool(retriever, chat))
     if bp is not None:
@@ -105,7 +109,9 @@ def build_done(result: Any, *, elapsed_ms: int, trace_id: str,
                provider: str = "") -> dict[str, Any]:
     """done 事件字段（docs/01 §3.4）：结构化结果 + schema_v。
 
-    澄清轮特征：三个来源字段全空 + phase_times 第二段=「澄清提问」。
+    澄清轮特征：三个来源字段全空 + phase_times 第二段=「澄清提问」；
+    tool_name 如实区分两条澄清路径（审计 P0-2 契约收口）：经工具追问=
+    ask_clarification，固定话术回退=""。
     主路径 phase_times 段名：rounds_ms/generate_ms/total_ms；降级直答：retrieve_ms/degrade_ms/total_ms。
     """
     sources = dedup_sources(list(getattr(result, "sources", []) or []))
@@ -117,8 +123,8 @@ def build_done(result: Any, *, elapsed_ms: int, trace_id: str,
         "sources": [] if clarify else sources,
         "web_sources": [] if clarify else deepcopy(web_sources or []),
         "charts": [] if clarify else charts,
-        "tool_called": bool(getattr(result, "tool_called", False)) and not clarify,
-        "tool_name": "" if clarify else str(getattr(result, "first_tool", "") or ""),
+        "tool_called": bool(getattr(result, "tool_called", False)),
+        "tool_name": str(getattr(result, "first_tool", "") or ""),
         "tool_calls": deepcopy(list(getattr(result, "tool_trace", []) or [])),
         "rounds": int(getattr(result, "rounds", 0)),
         "hit_cap": bool(getattr(result, "hit_cap", False)),
