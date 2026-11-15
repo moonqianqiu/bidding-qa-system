@@ -3,6 +3,7 @@
 // 401 / 403+4031（游客被踢）→ 清态跳 /login（登录页自身除外，凭据错误要就地展示）。
 
 import { clearAuth, getToken, type Role } from "./auth";
+import type { SSEEvent } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -91,7 +92,14 @@ export const listConversations = () =>
 
 export type ConvDetail = { id: string; title: string; messages: { items: StoredMsg[] } };
 
-export type StoredMsg = { role: "user" | "assistant"; content: string };
+// 落库 item（后端 conversations.messages.items）：v2 起 assistant item 附 done 收尾
+// 结构 + ts（刷新后回放来源/工具/图表/时间）；v1 旧行仅 role/content（正文回放）。
+export type StoredMsg = {
+  role: "user" | "assistant";
+  content: string;
+  ts?: number;
+  done?: Partial<SSEEvent>;
+};
 
 export const getConversation = (id: string) =>
   jfetch<ConvDetail>(`/api/conversations/${id}`);

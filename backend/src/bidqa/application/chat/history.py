@@ -19,9 +19,11 @@ logger = logging.getLogger("bidqa.application.chat.history")
 
 HISTORY_TURNS = 6  # 进上下文的最近轮数（摘要之外的滚动窗口）
 
+CONV_SCHEMA_V = 2  # v2：assistant item 附 done 收尾结构+ts（刷新后回放来源/工具/图表）；v1 旧行读取兼容
+
 
 def append_exchange(items: list[dict], question: str, answer: str) -> list[dict]:
-    """问答对追加（唯一实现；PG 落库与游客内存历史共用）。"""
+    """问答对追加（唯一实现；PG 落库与游客内存历史共用；只服务模型上下文的二元形态）。"""
     return items + [{"role": "user", "content": question},
                     {"role": "assistant", "content": answer}]
 
@@ -42,16 +44,21 @@ def load_history(store: Any, conversation_id: str | None) -> tuple[str | None, l
     if not row:
         return conversation_id, [], ""
     messages = row.get("messages") or {}
-    items = [m for m in messages.get("items", [])
+    # 显式投影二元：v2 item 携带的 done/ts 只服务前端回放，不进模型上下文
+    items = [{"role": m["role"], "content": m.get("content", "")}
+             for m in messages.get("items", [])
              if m.get("role") in ("user", "assistant")][-HISTORY_TURNS:]
     return conversation_id, items, str(messages.get("summary", "") or "")
 
 
 def persist_result(store: Any, conversation_id: str | None, question: str,
                    result: LoopResult, provider: str, prior_summary: str,
-                   user_id: str | None = None) -> str:
+                   user_id: str | None = None,
+                   done: dict | None = None) -> str:
     """会话落库（messages JSONB 内含 schema_v）；失败不抛（能力型）。
-    user_id=归属（docs/01 §3.1 会话隔离）：机器主 token/legacy 为 None（机器域）。"""
+    user_id=归属（docs/01 §3.1 会话隔离）：机器主 token/legacy 为 None（机器域）。
+    done=收尾结构（build_done 产物，v2）：随最后一条 assistant item 落库，
+    刷新后前端可回放来源/工具/图表；None 保持 v1 二元形态（旧调用方兼容）。"""
     if not store:
         return conversation_id or ""
     conv_id = conversation_id or str(uuid.uuid4())
@@ -59,10 +66,12 @@ def persist_result(store: Any, conversation_id: str | None, question: str,
         row = store.get_conversation(conv_id)
         items = (row.get("messages") or {}).get("items", []) if row else []
         title = title_of(row, question)
+        items = append_exchange(items, question, result.answer)[-200:]
+        if done is not None and items and items[-1].get("role") == "assistant":
+            items[-1] = {**items[-1], "done": done, "ts": int(time.time() * 1000)}
         store.upsert_conversation(
             conv_id, title,
-            {"schema_v": 1, "items": append_exchange(items, question,
-                                                     result.answer)[-200:],
+            {"schema_v": CONV_SCHEMA_V, "items": items,
              "summary": prior_summary}, provider, user_id=user_id)
         result.conversation_id = conv_id
     except Exception as exc:
@@ -88,7 +97,7 @@ def compress_after_done(store: Any, conv_id: str, chat: Any, question: str,
             row2 = store.get_conversation(conv_id)
             items2 = (row2.get("messages") or {}).get("items", [])
             store.upsert_conversation(conv_id, title_of(row2, question),
-                                      {"schema_v": 1, "items": items2,
+                                      {"schema_v": CONV_SCHEMA_V, "items": items2,
                                        "summary": summary}, "")
     except Exception as exc:  # 压缩失败不影响问答，但要在日志留痕（v2.2：不再全静默）
         logger.warning("会话压缩失败 conv=%s: %s: %s", conv_id,

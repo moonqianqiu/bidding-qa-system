@@ -55,6 +55,8 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
     identity = getattr(request.state, "identity", None)
     from bidqa.application.chat.worker import ChatJob, ChatJobError, run_chat_job
 
+    channel = SseChannel()
+    trace_id = uuid.uuid4().hex[:12]  # 先于 job 生成：落库收尾结构与 SSE done 共用同一 id
     job = ChatJob(
         message=payload.message,
         conversation_id=payload.conversation_id,
@@ -66,9 +68,8 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
         thinking_model=settings.CHAT_THINKING_MODEL,
         is_guest=bool(identity and identity.role == ROLE_GUEST),
         user_id=(identity.user_id if identity else None),
+        trace_id=trace_id,
     )
-    channel = SseChannel()
-    trace_id = uuid.uuid4().hex[:12]
     t0 = time.perf_counter()
 
     def deliver() -> None:

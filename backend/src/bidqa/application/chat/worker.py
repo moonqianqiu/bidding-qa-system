@@ -9,9 +9,10 @@ ChatJob（api/chat/stream 负责把请求模型转成它），业务流程可脱
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import time
 from typing import Any, Callable
 
-from bidqa.agent.assembly import build_registry
+from bidqa.agent.assembly import build_done, build_registry
 from bidqa.agent.loop import AgentLoop, LoopResult
 from bidqa.application.chat.degrade import direct_rag_answer
 from bidqa.application.chat.history import (
@@ -42,6 +43,7 @@ class ChatJob:
     thinking_model: str = ""  # 由 api 层从注入的 Settings 取（application 不读配置）
     is_guest: bool = False    # guest=不落库、历史走进程内缓存（docs/01 §3.1）
     user_id: str | None = None  # 落库归属；None=机器域（机器主 token/legacy）
+    trace_id: str = ""        # 落库收尾结构携带（与 SSE done 同 id，便于对账）
 
 
 @dataclass
@@ -88,6 +90,7 @@ def run_chat_job(job: ChatJob, emit: EventFn) -> JobOutcome:
 
 
 def _run_main(job: ChatJob, emit: EventFn) -> JobOutcome:
+    t_job = time.perf_counter()  # 落库收尾结构的耗时口径起点（编排全程）
     chat = build_chat_for(job.provider)  # C8/A12 profile 路由
     retriever = build_retriever()
     store = None if job.is_guest else build_conversation_store()
@@ -121,9 +124,13 @@ def _run_main(job: ChatJob, emit: EventFn) -> JobOutcome:
         guest_history.append(conv_id, job.message, result.answer)
         result.conversation_id = conv_id
         return JobOutcome(result=result)
+    # 落库收尾结构与 SSE done 同一 build_done 产物（刷新后可回放来源/工具/图表）；
+    # elapsed 为编排耗时，与 done 事件端到端耗时同源不同刻（差值为收尾组装的毫秒级）
+    stored_done = build_done(result, elapsed_ms=int((time.perf_counter() - t_job) * 1000),
+                             trace_id=job.trace_id, provider=job.provider or "")
     saved_id = persist_result(store, conv_id or job.conversation_id, job.message,
                               result, job.provider or "", prior_summary,
-                              user_id=job.user_id)
+                              user_id=job.user_id, done=stored_done)
     # C7 压缩延后：调用方在收尾事件投递之后执行（保持原时序，不阻塞 done）
     return JobOutcome(result=result,
                       compress=defer_compress(store, saved_id, chat, job.message,

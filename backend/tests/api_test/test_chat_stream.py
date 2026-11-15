@@ -440,7 +440,7 @@ def test_web_enabled_without_providers_degrades_honestly(client, monkeypatch) ->
 
 # ── 用户体系（docs/01 §3.1）：游客不落库+进程内历史；普通用户落库带归属 ──
 class RecordingPg:
-    """落库记录器：捕获 upsert 的 user_id 归属。"""
+    """落库记录器：捕获 upsert 的 user_id 归属与 messages 全文。"""
 
     def __init__(self):
         self.upserts: list[dict] = []
@@ -449,7 +449,8 @@ class RecordingPg:
         return None
 
     def upsert_conversation(self, conv_id, title, messages, provider="", user_id=None):
-        self.upserts.append({"conv_id": conv_id, "user_id": user_id})
+        self.upserts.append({"conv_id": conv_id, "user_id": user_id,
+                             "messages": messages})
 
 
 def _armed_stream_client(settings_factory, monkeypatch, ident):
@@ -505,3 +506,59 @@ def test_user_stream_stamps_owner(settings_factory, monkeypatch):
     legacy = TestClient(create_app(settings_factory()))  # CORE_ENV 默认 USERS_ENABLED=false
     stream_events(legacy, {"message": "问", "conversation_id": conv})
     assert pg2.upserts and pg2.upserts[0]["user_id"] is None
+
+
+# ── 会话落库补全收尾结构（schema_v 2：assistant item 附 done+ts，刷新后回放来源/工具/图表）──
+def test_persist_attaches_done_for_restore(settings_factory, monkeypatch):
+    """v2 落库：assistant item 附 done（与 SSE done 同一 build_done 产物）+ts；user item 保持二元。"""
+    from bidqa.auth.identity import Identity
+
+    ident = Identity("user", "22222222-2222-2222-2222-222222222223", "bob", "t-done")
+    client2 = _armed_stream_client(settings_factory, monkeypatch, ident)
+    pg = RecordingPg()
+    chat = FakeChat(tools_script=[
+        tool_msg("search_knowledge", {"query": "中标通知书"}),
+        text_msg("依据材料[1]作答。"),
+    ])
+    patch_service(monkeypatch, chat=chat, pg=pg)
+    conv = "22222222-2222-2222-2222-222222222223"
+    events = stream_events(client2, {"message": "中标通知书效力？", "conversation_id": conv},
+                           headers={"Authorization": "Bearer t-done"})
+    done = events[-1]
+    assert done["type"] == "done" and done["tool_name"] == "search_knowledge"
+    upsert = pg.upserts[-1]
+    items = upsert["messages"]["items"]
+    assert upsert["messages"]["schema_v"] == 2
+    assert [m["role"] for m in items] == ["user", "assistant"]
+    assert "done" not in items[0] and "ts" not in items[0]  # user item 二元不变
+    stored = items[-1]
+    assert stored["content"] == "依据材料[1]作答。" and stored["ts"] > 0
+    assert stored["done"]["trace_id"] == done["trace_id"]  # 与 SSE done 同构（wiring 亦覆盖）
+    assert stored["done"]["tool_name"] == "search_knowledge"
+    assert stored["done"]["rounds"] == done["rounds"] and stored["done"]["elapsed_ms"] > 0
+    assert stored["done"]["sources"] == done["sources"]  # 逐条来源口径一致（含聚合口径条目）
+
+
+def test_load_history_projects_binary_only():
+    """投影卫兵：v2 item 携带的 done/ts 只服务回放，不进模型上下文；v1 旧行照常加载。"""
+
+    class RowPg:
+        def __init__(self, messages):
+            self._messages = messages
+
+        def get_conversation(self, conv_id):
+            return {"id": conv_id, "title": "t", "messages": self._messages,
+                    "provider": "", "created_at": None, "updated_at": None}
+
+    v2 = {"schema_v": 2, "items": [
+        {"role": "user", "content": "问", "ts": 1700000000000},
+        {"role": "assistant", "content": "答", "ts": 1700000001000,
+         "done": {"sources": [{"id": "s1", "title": "法"}], "charts": [{"kind": "bar"}],
+                  "tool_name": "search_knowledge", "rounds": 2, "trace_id": "abc"}}]}
+    _, items, _ = history_mod.load_history(RowPg(v2), "c1")
+    assert items == [{"role": "user", "content": "问"},
+                     {"role": "assistant", "content": "答"}]
+    # v1 旧行（role/content 二元，无 done/ts）读取兼容
+    _, items1, _ = history_mod.load_history(RowPg(
+        {"schema_v": 1, "items": [{"role": "user", "content": "q"}]}), "c1")
+    assert items1 == [{"role": "user", "content": "q"}]

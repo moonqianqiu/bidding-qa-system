@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, Conversation } from "@/lib/types";
 import {
   deleteConversation, getConversation, listConversations, renameConversation,
-  type ConvSummary,
+  type ConvSummary, type StoredMsg,
 } from "@/lib/api";
 import type { AuthUser } from "@/lib/auth";
 
@@ -17,10 +17,14 @@ function toConversation(s: ConvSummary): Conversation {
   return { id: s.id, title: s.title, updatedAt: Date.parse(s.updated_at) || 0, messages: [] };
 }
 
-/** 服务端 items（_persist 落库：role/content 二元）→ 前端消息（正文回放；来源/图表不入库）。 */
-function storedToMessages(items: { role: "user" | "assistant"; content: string }[]): ChatMessage[] {
+/** 服务端 items → 前端消息：v2 assistant item 附 done（来源/工具/图表随 done 回放，
+ * 与实时 done 事件同构）；v1 旧行仅正文。 */
+function storedToMessages(items: StoredMsg[]): ChatMessage[] {
   return items.map((m, i) => ({
-    id: `srv-${i}`, role: m.role, content: m.content, ts: 0,
+    id: `srv-${i}`, role: m.role, content: m.content, ts: m.ts ?? 0,
+    done: m.done,
+    sources: m.done?.sources,
+    charts: m.done?.charts,
   }));
 }
 
