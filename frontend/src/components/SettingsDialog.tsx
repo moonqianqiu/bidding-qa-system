@@ -84,7 +84,7 @@ export default function SettingsDialog({
               ))}
             </div>
           </section>
-          {!!providers?.profiles.length && (
+          {providers && providers.profiles.length > 1 && ( // A12：仅一组时隐藏切换器（审计：原 ≥1 组即显示，单组下拉=摆设）
             <section>
               <p className="text-xs text-faint">{t.modelLabel}</p>
               <div className="mt-2 flex flex-col gap-1 rounded-lg border border-line bg-panel p-1">

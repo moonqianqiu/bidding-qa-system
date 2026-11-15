@@ -160,6 +160,8 @@ const zh = {
   purgeDone: (n: number) => `已删除 ${n} 条`,
   noLogs: "暂无日志",
   logBuffered: (n: number) => `缓冲 ${n} 条`,
+  logLevel: "级别",
+  logKeyword: "关键字过滤",
 };
 
 export type Dict = typeof zh;
@@ -316,6 +318,8 @@ const en: Dict = {
   purgeDone: (n: number) => `Deleted ${n}`,
   noLogs: "No logs yet",
   logBuffered: (n: number) => `${n} buffered`,
+  logLevel: "Level",
+  logKeyword: "Filter by keyword",
 };
 
 export function tOf(lang: Lang): Dict {

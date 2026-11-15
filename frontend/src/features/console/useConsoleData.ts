@@ -4,7 +4,7 @@
 // 轮询节奏：核心 30s（后端同款缓存）/ 日志 5s；403（非 admin）→ 页内提示态
 // （门禁在服务端，藏入口只是体验）；轮询失败静默（下个周期再试）。
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError, getConsoleStats, getHealth, getLogs, getMe, getMetrics,
   type ConsoleStats, type Health, type LogEntry, type Metrics,
@@ -21,6 +21,11 @@ export function useConsoleData() {
   const [forbidden, setForbidden] = useState(false);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+  // A11 日志过滤（审计：level/q 参数 API 早就有、UI 从未接）——ref 供 5s 轮询读现值
+  const [logLevel, setLogLevel] = useState("INFO");
+  const [logQuery, setLogQuery] = useState("");
+  const logFilterRef = useRef({ level: "INFO", q: "" });
+  logFilterRef.current = { level: logLevel, q: logQuery.trim() };
 
   const refreshCore = useCallback(async () => {
     const me = getUser();
@@ -45,7 +50,8 @@ export function useConsoleData() {
 
   const refreshLogs = useCallback(async () => {
     try {
-      const r = await getLogs("INFO");
+      const { level, q } = logFilterRef.current;
+      const r = await getLogs(level, q);
       setLogs(r.logs.slice(-50).reverse());
       setBuffered(r.buffered);
     } catch {
@@ -70,5 +76,6 @@ export function useConsoleData() {
   return {
     stats, health, metrics, logs, buffered, guestOn, setGuestOn,
     forbidden, error, loaded, refreshCore, refreshLogs,
+    logLevel, setLogLevel, logQuery, setLogQuery, // A11 日志过滤
   };
 }

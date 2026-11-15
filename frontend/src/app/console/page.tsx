@@ -222,6 +222,26 @@ export default function ConsolePage() {
             <h3 className={cardHead}>{t.secLogs}</h3>
             <span className="text-[10px] text-faint">5s · {t.logBuffered(buffered)}</span>
           </div>
+          {/* A11 日志过滤（审计：level/q 参数 API 早就有、UI 从未接）；变更即刷 */}
+          <div className="mt-2 flex items-center gap-2">
+            <select
+              value={d.logLevel}
+              onChange={(e) => { d.setLogLevel(e.target.value); d.refreshLogs(); }}
+              className="rounded-md border border-line bg-base px-2 py-1 text-[11px] text-fg outline-none focus:border-sky-800"
+              aria-label={t.logLevel}
+            >
+              {["DEBUG", "INFO", "WARNING", "ERROR"].map((lv) => (
+                <option key={lv} value={lv}>{lv}</option>
+              ))}
+            </select>
+            <input
+              value={d.logQuery}
+              onChange={(e) => { d.setLogQuery(e.target.value); d.refreshLogs(); }}
+              placeholder={t.logKeyword}
+              className="min-w-0 flex-1 rounded-md border border-line bg-base px-2 py-1 text-[11px] text-fg outline-none focus:border-sky-800"
+              aria-label={t.logKeyword}
+            />
+          </div>
           <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-line bg-base p-2">
             {logs.length === 0 ? (
               <p className="py-3 text-center text-xs text-faint">{t.noLogs}</p>
