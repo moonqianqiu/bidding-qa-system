@@ -4,7 +4,8 @@
 // 深浅色/语言收进设置对话框，入口在侧栏左下角（用户指定布局，不放输入区）。
 // 图片上传（v2.3 双通道）：选图只建档、发送时才解析（useImageAttachment）；
 // 「+」仅 vision 就绪时显示（capabilities.vision），按文档解析开关仅 OCR 就绪时显示。
-// 输入条形态（2026-11-15 UI 轮）：默认一行扁平，多行自动长高、封顶 max（不超 128px）。
+// 输入条形态（2026-11-15 UI 轮）：默认一行扁平，多行自动长高、封顶 max（不超 128px）；
+// 长高后右侧「+/发送」由横排改纵向叠放（加号在发送头上），消掉右列悬空空白。
 
 import { useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
@@ -52,16 +53,20 @@ export default function Composer({
 }) {
   const { t } = useI18n();
   const [text, setText] = useState("");
+  const [grown, setGrown] = useState(false); // 多行长高态：右侧按钮横排→纵向叠放
   const composingRef = useRef(false); // IME 组词中不触发发送
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
-  // 自动长高：内容变化时按 scrollHeight 伸展，封顶 TA_MAX_PX（超出内部滚动）
+  // 自动长高：内容变化时按 scrollHeight 伸展，封顶 TA_MAX_PX（超出内部滚动）；
+  // 超过一行高（按钮 36px）即视为多行，切换右侧按钮布局
   useLayoutEffect(() => {
     const el = taRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, TA_MAX_PX)}px`;
+    const h = Math.min(el.scrollHeight, TA_MAX_PX);
+    el.style.height = `${h}px`;
+    setGrown(h > 44);
   }, [text]);
 
   const submit = () => {
@@ -129,48 +134,59 @@ export default function Composer({
             rows={1}
             maxLength={4000}
             placeholder={t.placeholder}
-            className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-fg outline-none placeholder:text-faint"
+            className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-fg outline-none placeholder:text-faint [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-line [&::-webkit-scrollbar-track]:bg-transparent"
           />
-          {visionReady && (
-            <>
+          {/* 多行时纵排（加号在发送头上），单行时横排；items-stretch 让加号与发送同宽 */}
+          <div
+            className={
+              grown
+                ? "flex shrink-0 flex-col items-stretch gap-1.5"
+                : "flex shrink-0 items-center gap-2"
+            }
+          >
+            {visionReady && (
+              <>
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  disabled={disabled || streaming || preparing}
+                  title={t.attach}
+                  aria-label={t.attach}
+                  className={`shrink-0 rounded-lg border border-line px-3 py-2 text-base leading-none text-dim transition hover:border-sky-800 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40 ${
+                    grown ? "w-full" : ""
+                  }`}
+                >
+                  +
+                </button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) onPickFile(file);
+                    e.target.value = ""; // 同名文件可重复选择
+                  }}
+                />
+              </>
+            )}
+            {streaming ? (
               <button
-                onClick={() => fileRef.current?.click()}
-                disabled={disabled || streaming || preparing}
-                title={t.attach}
-                aria-label={t.attach}
-                className="shrink-0 rounded-lg border border-line px-3 py-2 text-base leading-none text-dim transition hover:border-sky-800 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={onStop}
+                className="shrink-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 dark:bg-red-900/70 dark:text-red-200 dark:hover:bg-red-800/70"
               >
-                +
+                {t.stop}
               </button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) onPickFile(file);
-                  e.target.value = ""; // 同名文件可重复选择
-                }}
-              />
-            </>
-          )}
-          {streaming ? (
-            <button
-              onClick={onStop}
-              className="shrink-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 dark:bg-red-900/70 dark:text-red-200 dark:hover:bg-red-800/70"
-            >
-              {t.stop}
-            </button>
-          ) : (
-            <button
-              onClick={submit}
-              disabled={disabled || !text.trim()}
-              className="shrink-0 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {t.send}
-            </button>
-          )}
+            ) : (
+              <button
+                onClick={submit}
+                disabled={disabled || !text.trim()}
+                className="shrink-0 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {t.send}
+              </button>
+            )}
+          </div>
         </div>
         <div className="mt-1.5 flex items-center gap-3 px-1 text-[11px]">
           {webReady && <Toggle label={t.webSearch} on={webEnabled} onChange={onToggleWeb} />}
