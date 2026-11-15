@@ -97,6 +97,50 @@ def test_cache_key_is_content_addressed() -> None:
     assert chat.calls == 2  # 同 len 不同内容：缓存不得命中（旧键下=1，红）
 
 
+def test_compress_worker_threads_are_daemon() -> None:
+    """P1-7（审计）：压缩执行器 worker 曾非守护——卡住的压缩拖住进程退出。"""
+    compress._cache.clear()
+    compress_history(FastChat(), [{"role": "user", "content": "q"}], conversation_id="c7d")
+    workers = [t for t in __import__("threading").enumerate() if t.name.startswith("compress")]
+    assert workers and all(t.daemon for t in workers)
+
+
+def test_compress_queue_full_drops_with_count() -> None:
+    """P1-7（审计）：压缩提交曾无界排队；收口后队列容量 1——满即丢并计数
+    （等同不开启的诚实降级）。compress_history 是同步阻塞语义，排队必须用
+    线程并发提交才能复现满队列。"""
+    import threading as _threading
+
+    compress._cache.clear()
+    gate = _threading.Event()
+    started = _threading.Event()
+    results: list = []
+
+    class GateChat:
+        def chat(self, messages, temperature=0.3):
+            started.set()
+            gate.wait(3.0)
+            return "门闩摘要"
+
+    items = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
+    t1 = _threading.Thread(target=lambda: compress_history(GateChat(), items,
+                                                          conversation_id="c7f1"),
+                           daemon=True)
+    t1.start()
+    assert started.wait(2.0)  # 第一个已占用 worker（queue 空）
+    t2 = _threading.Thread(target=lambda: results.append(
+        compress_history(FastChat(), items, conversation_id="c7f2")), daemon=True)
+    t2.start()
+    time.sleep(0.2)  # t2 已提交并排队（容量 1 占满）
+    dropped = compress_history(FastChat(), items, conversation_id="c7f3")  # 满即丢
+    assert dropped is None  # 等同不开启
+    assert compress.dropped_count() == 1
+    gate.set()
+    t1.join(3.0)
+    t2.join(3.0)
+    assert results and results[0]  # 排队那个最终会跑（下一轮的压缩不丢）
+
+
 def test_compress_after_done_preserves_provider_and_owner() -> None:
     """P1-11（审计）+ P1-1 守卫配套：二次 upsert 曾用 provider="" 覆盖（命名档
     选择丢失）且不带 user_id——owner 守卫下整条更新会被拒绝。"""

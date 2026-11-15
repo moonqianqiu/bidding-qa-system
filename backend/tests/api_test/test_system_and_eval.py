@@ -87,6 +87,36 @@ def test_eval_runs_not_gated_by_online_flag(settings_factory, monkeypatch, tmp_p
     assert client.get("/api/eval/runs/agent_x.json").status_code == 200
 
 
+def test_setup_log_buffer_idempotent_and_stderr_masked() -> None:
+    """P2-4（审计）：①setup 曾给 root 无条件叠 MemoryLogHandler（3× create_app →
+    每条日志重复 3 份）；②stderr StreamHandler 未脱敏——backend.log 由它落盘，
+    裸 sk- 密钥曾直接入盘（硬约束 6「先脱敏后截断」只覆盖了内存环）。"""
+    import io
+    import logging as _logging
+
+    from bidqa.obs.logs import MaskedStreamHandler, MemoryLogHandler, setup_log_buffer
+
+    root = _logging.getLogger()
+    # 清场：其他用例的 create_app 可能已叠过 handler，本用例从零计数
+    for h in [h for h in root.handlers if isinstance(h, MemoryLogHandler)]:
+        root.removeHandler(h)
+    bidqa = _logging.getLogger("bidqa")
+    for h in [h for h in bidqa.handlers if isinstance(h, MaskedStreamHandler)]:
+        bidqa.removeHandler(h)
+    for _ in range(3):
+        setup_log_buffer()
+    assert len([h for h in root.handlers if isinstance(h, MemoryLogHandler)]) == 1
+    assert len([h for h in bidqa.handlers if isinstance(h, MaskedStreamHandler)]) == 1
+    stream = io.StringIO()
+    h = MaskedStreamHandler(stream)
+    h.setFormatter(_logging.Formatter("%(message)s"))
+    rec = _logging.LogRecord("t", _logging.INFO, "p", 1,
+                             "key sk-abcd1234567890abcd end", (), None)
+    h.handle(rec)
+    assert "abcd1234567890abcd" not in stream.getvalue()  # 裸 key 不落盘
+    assert "sk-abcd****abcd" in stream.getvalue()
+
+
 def test_eval_runs_list_and_detail(settings_factory, monkeypatch, tmp_path) -> None:
     import bidqa.api.eval_runs as mod
 

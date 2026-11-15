@@ -49,18 +49,34 @@ class MemoryLogHandler(logging.Handler):
                            "name": record.name, "message": message[:500]})
 
 
+class MaskedStreamHandler(logging.StreamHandler):
+    """stderr handler（backend.log 的落盘出口）——**先脱敏后写**（审计 P2-4：
+    原 StreamHandler 裸写，sk- 密钥直接入 backend.log；硬约束 6 曾只覆盖内存环）。"""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = mask_secrets(self.format(record))
+            self.stream.write(msg + self.terminator)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+
 def setup_log_buffer(level: int = logging.INFO) -> None:
-    handler = MemoryLogHandler()
-    handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+    # 幂等（审计 P2-4：root 的 MemoryLogHandler 曾无条件叠加——3× create_app
+    # 每条日志重复 3 份入环）
     root = logging.getLogger()
-    root.addHandler(handler)
+    if not any(isinstance(h, MemoryLogHandler) for h in root.handlers):
+        handler = MemoryLogHandler()
+        handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+        root.addHandler(handler)
     root.setLevel(level)
     # 应用级日志同步落 stderr（start.sh 2>&1 → backend.log）。此前根 logger 只有内存环，
     # 「上游流式响应为空」等 warning 在 backend.log 里永远看不到（2026-11-08 实证修复）。
     # uvicorn 自有 handler 不传播到 root，不会重复输出。幂等：重复 setup 不叠 handler。
     bidqa = logging.getLogger("bidqa")
-    if not any(isinstance(h, logging.StreamHandler) for h in bidqa.handlers):
-        stream = logging.StreamHandler()  # 默认 stderr
+    if not any(isinstance(h, MaskedStreamHandler) for h in bidqa.handlers):
+        stream = MaskedStreamHandler()  # 默认 stderr；先脱敏后写（P2-4）
         stream.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         bidqa.addHandler(stream)
     bidqa.setLevel(level)

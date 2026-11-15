@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import queue
 import re
-from concurrent.futures import Future, ThreadPoolExecutor
+import threading
+from concurrent.futures import Future
 from typing import Any
 
 COMPRESS_TIMEOUT = 5.0
@@ -25,8 +27,66 @@ _COMPRESS_PROMPT = (
     "③保留未决问题 ④不超过 750 字。只输出摘要正文。"
 )
 
-_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="compress")
-_cache: dict[str, str] = {}  # LRU：key = (conversation_id, items_len)
+_cache: dict[str, str] = {}  # LRU：key = 内容寻址 sha256（P1-11）
+_dropped = 0  # 队列满即丢计数（P1-7：满即丢并计数，绝不无界积压）
+
+
+class _CompressWorker:
+    """单条守护 worker（审计 P1-7：原 ThreadPoolExecutor 线程非守护且提交无界）。
+    队列容量 1：上一轮压缩未完时新提交入队，再满即丢（等同不开启，计数可查）。"""
+
+    def __init__(self) -> None:
+        self._queue: queue.Queue = queue.Queue(maxsize=1)
+        threading.Thread(target=self._loop, daemon=True, name="compress").start()
+
+    def submit(self, fn, *args) -> Future | None:
+        fut: Future = Future()
+        try:
+            self._queue.put_nowait((fn, args, fut))
+        except queue.Full:
+            global _dropped
+            _dropped += 1
+            return None  # 等同不开启（诚实降级，绝不积压烧钱）
+        return fut
+
+    def _loop(self) -> None:
+        while True:
+            fn, args, fut = self._queue.get()
+            if not fut.set_running_or_notify_cancel():
+                continue
+            try:
+                fut.set_result(fn(*args))
+            except BaseException as exc:  # Future 容器承载，不炸 worker
+                fut.set_exception(exc)
+
+    def close(self) -> None:
+        while True:
+            try:
+                _fn, _args, fut = self._queue.get_nowait()
+            except queue.Empty:
+                return
+            fut.cancel()
+
+
+_worker: _CompressWorker | None = None
+
+
+def _get_worker() -> _CompressWorker:
+    global _worker
+    if _worker is None:
+        _worker = _CompressWorker()
+    return _worker
+
+
+def dropped_count() -> int:
+    """队列满即丢计数（可观测性：metrics/测试用）。"""
+    return _dropped
+
+
+def close() -> None:
+    """停机钩子（lifespan 调用）：排空排队任务，不等运行中的卡住压缩。"""
+    if _worker is not None:
+        _worker.close()
 
 
 def _cache_get(key: str) -> str | None:
@@ -75,7 +135,9 @@ def compress_history(chat: Any, items: list[dict], prior_summary: str = "",
     key = f"{conversation_id}|{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
     if cached := _cache_get(key):
         return cached
-    future: Future = _executor.submit(_compress_sync, chat, prior_summary, items)
+    future = _get_worker().submit(_compress_sync, chat, prior_summary, items)
+    if future is None:
+        return None  # 队列满（上一轮未跑完）→ 本轮等同不开启（P1-7 满即丢）
     try:
         summary = future.result(timeout=timeout)
     except Exception:  # 超时/异常：本轮不压缩（future 留给守护线程自然结束）

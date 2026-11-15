@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
@@ -199,3 +200,87 @@ def test_run_batch_registry_is_per_call() -> None:
 def test_runner_has_no_mutable_registry_attribute() -> None:
     """P0-1 结构守卫：Runner 不再持有 .registry 属性（可变共享态的根）。"""
     assert not hasattr(ToolRunner(), "registry")
+
+
+def test_runner_threads_are_daemon() -> None:
+    """P1-7（审计）：执行器 worker 曾非守护（3.9+ ThreadPoolExecutor 退出时 join）
+    ——卡住的工具拖住整个进程退出。守护化后实测 daemon=True。"""
+    reg = make_registry()
+    runner = ToolRunner()
+    runner.run_batch([ToolCall("echo", {"text": "x"})], reg)
+    workers = [t for t in threading.enumerate() if t.name.startswith("toolrun")]
+    assert workers, "worker 线程未启动"
+    assert all(t.daemon for t in workers)
+
+
+def test_timeout_cancels_queued_calls() -> None:
+    """P1-7（审计）：超时曾只记 timeout outcome、排队任务照跑（future 不取消）。
+    收口后未开跑的排队任务被取消——不再白烧执行与下游调用。"""
+    executed: list[str] = []
+
+    class CountingSlow(BaseTool[EchoArgs]):
+        name = "slow"
+        description = "计数慢工具（测试用）"
+        args_model = EchoArgs
+
+        def run(self, args: EchoArgs) -> dict:
+            executed.append(args.text)
+            time.sleep(0.6)
+            return tool_result(text="done")
+
+    reg = ToolRegistry()
+    reg.register(CountingSlow())
+    runner = ToolRunner(max_workers=4, batch_timeout=0.2)
+    outs = runner.run_batch([ToolCall("slow", {"text": f"j{i}"}) for i in range(5)], reg)
+    assert all(o.ok is False and o.payload["error"] == "timeout" for o in outs)
+    time.sleep(1.0)  # 给运行中的 4 个自然跑完的时间
+    assert len(executed) == 4  # 第 5 个在排队被取消，绝不执行（原=5，红）
+
+
+def test_close_drains_queued_and_is_nonblocking() -> None:
+    """P1-7：close()（停机钩子调用）排空排队任务且不等运行中的卡住工具——
+    守护线程语义下进程退出不被拖住。run_batch 是同步阻塞语义，占满/排队须用线程。"""
+    executed: list[str] = []
+    started = threading.Event()
+    gate = threading.Event()
+
+    class GateTool(BaseTool[EchoArgs]):
+        name = "gate"
+        description = "门闩工具（测试用）"
+        args_model = EchoArgs
+
+        def run(self, args: EchoArgs) -> dict:
+            executed.append(args.text)
+            started.set()
+            gate.wait(3.0)
+            return tool_result(text="done")
+
+    reg2 = ToolRegistry()
+    reg2.register(GateTool())
+    runner = ToolRunner(batch_timeout=30.0)
+    boxes: list[list] = []
+
+    th = threading.Thread(target=lambda: boxes.append(
+        runner.run_batch([ToolCall("gate", {"text": f"w{i}"}) for i in range(4)], reg2)),
+        daemon=True)
+    th.start()
+    assert started.wait(2.0)
+    time.sleep(0.2)  # 4 个 worker 全部占满
+    th2 = threading.Thread(target=lambda: boxes.append(
+        runner.run_batch([ToolCall("gate", {"text": "q1"})], reg2)), daemon=True)
+    th2.start()
+    # 确定性同步：等 q1 真正入队（消除 close 与 submit 的竞态；白盒观察队列深度）
+    deadline = time.perf_counter() + 2.0
+    while runner._pool._queue.qsize() < 1 and time.perf_counter() < deadline:
+        time.sleep(0.01)
+    assert runner._pool._queue.qsize() == 1
+
+    t0 = time.perf_counter()
+    runner.close()
+    assert time.perf_counter() - t0 < 1.0  # 不等运行中的卡住工具（守护语义）
+    th2.join(2.0)  # 排队 future 被取消=done → run_batch 立即返回
+    gate.set()
+    th.join(3.5)
+    assert sorted(executed) == ["w0", "w1", "w2", "w3"]  # 排队 q1 被排空，绝不执行（并行序不定）
+    queued_outcomes = next(b for b in boxes if len(b) == 1)  # 返回顺序不保证（th2 先于 th 收尾）
+    assert queued_outcomes[0].payload["error"] == "timeout"  # 被取消者=timeout 结构
