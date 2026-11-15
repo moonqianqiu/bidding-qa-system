@@ -6,8 +6,8 @@
 // 用户体系（docs/01 §3.1）：会话「服务端主」；游客不调会话 API（纯内存，关页即失）。
 
 import { useCallback, useEffect, useState } from "react";
-import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
-import { logout, postFeedback } from "@/lib/api";
+import { clearAuth, getUser, setAuth, type AuthUser } from "@/lib/auth";
+import { getMe, logout, postFeedback } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import type { ChatMessage, Conversation } from "@/lib/types";
 import Composer from "@/components/Composer";
@@ -26,15 +26,26 @@ import UserBox from "@/features/chat/UserBox";
 export default function Home() {
   const { lang, t } = useI18n();
 
-  // 初始化即校验登录态：未登录/会话失效 → /login（由 getUser 与 401 跳转共同兜底）。
-  // getUser SSR 安全（try/catch）；跳转必须在 useEffect（预渲染期无 window，C7 实证）。
-  const [authUser] = useState<AuthUser | null>(() => getUser());
+  // 初始化即校验登录态：未登录 → /login；**单机模式（users_enabled=false）→ 注入
+  // 占位身份放行**（审计 P0-5：原主页查 localStorage 无身份即跳 /login，登录页又因
+  // 单机模式跳回 / → 死循环整站不可用）。getUser SSR 安全；跳转必须在 useEffect。
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => getUser());
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
-    if (!getUser()) {
-      window.location.assign("/login");
-    }
+    if (getUser()) return; // 已登录（含游客）
+    getMe()
+      .then((m) => {
+        if (m.users_enabled) {
+          window.location.assign("/login");
+          return;
+        }
+        // 单机模式无登录概念：本地占位身份（后端 middleware 单机分支放行，
+        // 与 token 无关）；role=user 放开导出/传图等 UI 门控
+        setAuth("", { username: "local", role: "user" });
+        setAuthUser({ username: "local", role: "user" });
+      })
+      .catch(() => window.location.assign("/login")); // 后端不可达：登录页展示错误
   }, []);
   const isGuest = authUser?.role === "guest";
 
