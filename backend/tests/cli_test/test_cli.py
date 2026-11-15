@@ -34,6 +34,10 @@ class FakeStore:
         self.resets: list[str] = []
         self.disabled: list[tuple[str, bool]] = []
 
+    def verify_password_ok(self, username: str, candidate: str) -> bool:
+        # P1-5：doctor 对账号真实哈希体检（fake=admin 仍是默认口令）
+        return username == "admin" and candidate == "admin123"
+
     def create_user(self, name, password, role):
         if name in {u["username"] for u in self.users}:
             return None
