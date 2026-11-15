@@ -21,7 +21,7 @@
 | 类型检查 | pyrefly **49**（基线 56；bad-override ×5 + missing-attribute ×3 已清零，余为 psycopg 行类型噪音） | `uv run --with pyrefly pyrefly check src` |
 | 前端类型 | 绿（`npm run build` 五路由全预渲染） | `cd frontend && npm run build` |
 | e2e 三走向 | `--mutation-check` 免费自证 PASS；真跑调主模型（付费，跑前看 §3 成本） | `bash deploy/e2e-chat.sh --mutation-check` |
-| Agent 评测 | **33 例 30/33=0.909**（2026-11-15 重跑，快照 `agent_20261115_fbecc16_Qwen3.8-27B.json`；hit_cap 0.0、澄清触发 1.0，三门槛全 PASS）；3 例 FAIL=模型对均价/采购人分布偏选 db（图谱独有能力），golden 不改预期，改进方向=graph 描述措辞（再跑需付费） | `uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent` |
+| Agent 评测 | **33/33=1.0**（2026-11-15 描述强化后重跑，快照 `agent_20261115_82cc77f_deepseek-flash.json`；hit_cap 0.0、澄清触发 1.0；前值 30/33=0.909 见历史快照）——graph 描述「让位句+自留地」收口后 3 例独有能力 FAIL 全转 PASS，排名统计类无反抢 | `uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent` |
 | 图谱归一 | v2.1 完成：curated 映射 **9 项合并**（Purchaser 3504→3495，其余五类不变）；合并实体项目数守恒 PASS；分支/校区/附属误并候选全部未合并 | `python ../data/run/kg_acceptance.py` |
 | 产品定位 | **练习版**（老师评估 + 甲方验收双门槛），PRD 逐项对照 = docs/03 附录B | —— |
 | 旧仓 | `D:/.../bidding-qa-system` **冻结存档**（原地冻结+README 退役声明；数据副本保留），哈希只对应旧历史 | — |
@@ -35,7 +35,7 @@
 | v2.3 双通道付费验收 | ✅ 2026-11-15 三 PASS | 文档图 auto→OCR（PaddleOCR-VL-1.5 原件逐字提取，编号/金额全对）、图表图 auto→describe（远端多模态 Qwen3.8-27B 结构化描述准确）、带图提问 3.8s 直答并引用 BZGY2023CG141 与 ¥12,500,000.00；过程与教训见开发日志 11-15 行。**vision 槽位现为用户定版远端多模态 Qwen3.8-27B（llama.cpp，.env 模型 id 未变）**；OCR=SiliconFlow PaddleOCR-VL-1.5 |
 | 会话回放 + UI 输入条轮 | ✅ 2026-11-15 | 会话落库 **schema_v 2**：assistant item 附 done 收尾结构+ts，刷新后来源/工具/图表/耗时/trace 全回放（f36ea36；v1 旧行兼容=仅正文；load_history 投影二元防漏进上下文；真机三态验证过）。UI 输入条扁平化+多行自动长高封顶 128px+右侧按钮纵向叠放+退出登录明确按钮（0378692/c123eb3） |
 | CI / 私有远端 | P0 工程化（用户拍板：以后再弄） | 新仓 `git remote -v` 为空——建私有库 `git remote add origin <url> && git push origin main --tags` |
-| agent 评测快照重跑 | ✅ 2026-11-15 完成（用户批准付费） | golden 33 例重跑：**30/33=0.909**、hit_cap 0.0、澄清 1.0，退出门槛全 PASS；快照 `agent_20261115_fbecc16_Qwen3.8-27B.json`（判分未调用）。3 FAIL=ag-025 均价/ag-029、030 采购人分布——模型偏选 db，图谱独有能力（amount_agg 均价、purchaser_dist 包含过滤）被「排名优先 db」让位句盖过；golden 不改预期（改=橡皮图章），描述措辞迭代另立轮（需再跑付费） |
+| agent 评测快照重跑 | ✅ 2026-11-15 两轮收口 | ①扩例后首跑 30/33=0.909（快照 `agent_20261115_fbecc16_Qwen3.8-27B.json`）；②graph 描述强化（82cc77f：让位句保留+划出自留地——均价/采购人片段过滤/subject_supplier 仅图谱支持）后重跑 **33/33=1.0**（快照 `agent_20261115_82cc77f_deepseek-flash.json`；快照名嵌 JUDGE_MODEL 指纹，两次跑批间用户改过 .env 判分模型名，agent 模式均未调判分）。退出门槛两轮全 PASS |
 | `detail_search` 金额排序 | ✅ 2026-11-15 | `order_by`（amount_desc/asc + 中文别名容错归一）仅 detail_search 支持，`ORDER BY award_amount … NULLS LAST`（金额取不到沉底）；聚合/趋势固定口径拒绝（args + bp_query 双层）；真机三态核对 PASS |
 | 会话回放两债 | ✅ 2026-11-15 两债全清 | ①降级直答落库（efbbb4e）：worker 异常分支对称持久化——游客进 guest_history、普通用户附 done 落 PG，刷新后降级回答不再整条消失；②反馈态回查（A7 债②）：`GET /api/conversations/{id}/feedback`（同问题取最新）+ 前端 openConversation 并联回查映射 message.feedback，👍/👎 刷新还原 |
 | 离群值溯源 | 数据排查 | 66 亿（涡阳 BZGY2023CG141）/ 23.7 亿 全局头部可疑值，源 xlsx 不可考——需与甲方核对源表 |
