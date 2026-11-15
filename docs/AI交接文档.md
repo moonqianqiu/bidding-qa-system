@@ -43,7 +43,7 @@
 | clarify.py PROVINCES 词表副本 | ✅ 2026-11-15 收口 | clarify 改导入 `ingest/regions.PROVINCES`（agent→ingest 分层允许，layering 实测确认），历史副本删除；锁定测试 34 省逐一可匹配 + 同对象断言 |
 | DI 直调残留 | 测试隔离债（低） | `api/system/metrics.py` 的 `_online_stats`、`_qdrant_counts` 读配置走 get_settings()（仅读端点内部，无测试依赖真实 .env，危害低）；新代码一律 Depends |
 | 真实 PDF 语料导入 | 功能候选 | `bidqa ingest pdf` 链路已通（MinerU 云端 + pdfplumber 兜底）；`data/raw/` 为空，语料未灌 |
-| 在线评测开启 | 配置决策 | 默认关（`ONLINE_EVAL_ENABLED=false`）；判分是**收费中转**，何时开启由用户拍板 |
+| 在线评测开启 | ✅ 2026-11-15 已开启（用户改 .env：`ONLINE_EVAL_ENABLED=true`、`ONLINE_EVAL_SAMPLE_RATE=0.03`） | 真机三验证 PASS：online jsonl 行为指标落盘（rounds/tool/elapsed 免费）、`GET /api/eval/runs` 200（新快照可查）、metrics `online_eval` 节 enabled/behavior=1/queued=0；判分 3% 抽样 + 点踩 100% 必评 |
 
 ## 4. 环境与数据速览
 
