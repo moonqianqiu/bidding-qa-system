@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import re
 
-PROVINCES = (
-    "北京|天津|河北|山西|内蒙古|辽宁|吉林|黑龙江|上海|江苏|浙江|安徽|福建|江西|山东|"
-    "河南|湖北|湖南|广东|广西|海南|重庆|四川|贵州|云南|西藏|陕西|甘肃|青海|宁夏|新疆|"
-    "香港|澳门|台湾"
-)
-_REGION_RE = re.compile(rf"(?:{PROVINCES})|[\u4e00-\u9fa5]{{1,4}}(?:省|市|自治区)")
+# 省级行政区词表单一来源 = ingest/regions.PROVINCES（C1 检查点拍板收口：
+# agent→ingest 分层允许；此前本地副本与 ingest 各一份会漂移）
+from bidqa.ingest.regions import PROVINCES
+
+_REGION_RE = re.compile("|".join(PROVINCES) + r"|[\u4e00-\u9fa5]{1,4}(?:省|市|自治区)")
 _TIME_RE = re.compile(
     r"\d{4}\s*年|\d{1,2}\s*月|\d{1,2}\s*日|今年|去年|前年|本月|上月|"
     r"最近|近期|今年以来|上半年|下半年|第[一二三四]季度|[春夏秋冬]季|同比|环比"

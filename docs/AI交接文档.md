@@ -40,7 +40,7 @@
 | 会话回放两债 | ✅ 2026-11-15 两债全清 | ①降级直答落库（efbbb4e）：worker 异常分支对称持久化——游客进 guest_history、普通用户附 done 落 PG，刷新后降级回答不再整条消失；②反馈态回查（A7 债②）：`GET /api/conversations/{id}/feedback`（同问题取最新）+ 前端 openConversation 并联回查映射 message.feedback，👍/👎 刷新还原 |
 | 离群值溯源 | 数据排查 | 66 亿（涡阳 BZGY2023CG141）/ 23.7 亿 全局头部可疑值，源 xlsx 不可考——需与甲方核对源表 |
 | embed_store 编码文本不一致 | 工程债（低优先） | dense+sparse 看 `ctx_summary+text`、bm25 词频通道看 `title+text`——改则两处对齐 + 重 ingest 全量；2026-11-10 起空摘要时仅 text，口径见旧记录 |
-| clarify.py PROVINCES 词表副本 | 词表收口（C1 检查点已拍板待做） | 与 `ingest/regions.py` 双份会漂移——收口方向：clarify 导入 ingest/regions.PROVINCES（agent→ingest 允许） |
+| clarify.py PROVINCES 词表副本 | ✅ 2026-11-15 收口 | clarify 改导入 `ingest/regions.PROVINCES`（agent→ingest 分层允许，layering 实测确认），历史副本删除；锁定测试 34 省逐一可匹配 + 同对象断言 |
 | DI 直调残留 | 测试隔离债（低） | `api/system/metrics.py` 的 `_online_stats`、`_qdrant_counts` 读配置走 get_settings()（仅读端点内部，无测试依赖真实 .env，危害低）；新代码一律 Depends |
 | 真实 PDF 语料导入 | 功能候选 | `bidqa ingest pdf` 链路已通（MinerU 云端 + pdfplumber 兜底）；`data/raw/` 为空，语料未灌 |
 | 在线评测开启 | 配置决策 | 默认关（`ONLINE_EVAL_ENABLED=false`）；判分是**收费中转**，何时开启由用户拍板 |

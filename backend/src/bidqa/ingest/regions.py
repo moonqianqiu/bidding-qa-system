@@ -1,8 +1,8 @@
 """省级行政区词表（单一来源）：地区归一与区域判据共用的行政区名。
 
 2026-11-14 自包根 regions.py 并入 ingest/（当前唯一使用方 normalize.py）。
-已知历史副本：agent/clarify.py 内有一份独立 PROVINCES 元组（docstring 曾误称
-共享本表）——词表收口待 C1 检查点拍板后处理，在此之前两份可能漂移。
+2026-11-15 词表收口（C1 检查点拍板）：agent/clarify.py 改导入本表，历史副本删除
+——全库仅此一份，新增/调整省级行政区只动这里。
 """
 
 from __future__ import annotations
