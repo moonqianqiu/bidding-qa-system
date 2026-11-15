@@ -433,6 +433,29 @@ def test_reset_password_revokes_sessions(pg_client: PgConn) -> None:
         pg_client.commit()
 
 
+def test_verify_password_ok_no_side_effects(pg_client: PgConn) -> None:
+    """口令体检（审计 P1-5）：对账号**真实哈希**比对候选口令（doctor 告警从
+    比对 .env 配置值升级），不发会话不写库——login 会造会话行，不能用于探默认口令。"""
+    from bidqa.auth.store import UsersStore
+
+    store = UsersStore(pg_client)
+    try:
+        store.create_user("IT-auth-pw", "not-default", "user")
+        sessions_before = pg_client.connection().execute(
+            "SELECT count(*) AS n FROM sessions").fetchone()["n"]
+        assert store.verify_password_ok("IT-auth-pw", "not-default") is True
+        assert store.verify_password_ok("IT-auth-pw", "admin123") is False  # 实际口令非默认
+        assert store.verify_password_ok("IT-auth-ghost", "x") is False  # 不存在=False
+        assert pg_client.connection().execute(
+            "SELECT count(*) AS n FROM sessions").fetchone()["n"] == sessions_before  # 零副作用
+    finally:
+        conn = pg_client.connection()
+        conn.execute("DELETE FROM sessions WHERE user_id IN "
+                     "(SELECT id FROM users WHERE username LIKE 'IT-auth-%')")
+        conn.execute("DELETE FROM users WHERE username LIKE 'IT-auth-%'")
+        pg_client.commit()
+
+
 def test_resolve_uses_live_role(pg_client: PgConn) -> None:
     """role 实时取库（审计 P1-3）：登录后角色被降级，旧会话即刻失权——
     resolve 此前读 sessions.role 登录时快照，降权窗口长达会话 TTL（72h）。"""

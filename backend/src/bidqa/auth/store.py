@@ -156,6 +156,13 @@ class UsersStore:
         row = self._conn().execute("SELECT count(*) AS n FROM users").fetchone()
         return int(row["n"]) if row else 0
 
+    def verify_password_ok(self, username: str, candidate: str) -> bool:
+        """口令体检（doctor/启动告警用）：账号当前口令是否等于 candidate。
+        不发会话不做任何写操作——与 login 的区别是无副作用，可安全探默认口令。"""
+        row = self._conn().execute(
+            "SELECT password_hash FROM users WHERE username = %s", (username,)).fetchone()
+        return bool(row and verify_password(candidate, row["password_hash"]))
+
     # ── 运行时开关（app_settings）──
     def guest_enabled(self) -> bool:
         """无记录=默认开（种子前与旧行为一致）；显式 'false' 才算关。"""

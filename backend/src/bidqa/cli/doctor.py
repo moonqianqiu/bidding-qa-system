@@ -49,8 +49,11 @@ def cmd_doctor(_args, settings: Any) -> int:
         guest = "开" if store.guest_enabled() else "关"
         print(f"  用户体系  就绪（users={n_users}，游客开关={guest}，会话 TTL={settings.SESSION_TTL_HOURS}h）")
         names = {u["username"] for u in store.list_users()}
-        if settings.ADMIN_USERNAME in names and settings.ADMIN_PASSWORD == "admin123":
-            print("  ⚠ 管理员仍在用默认口令（admin/admin123），请 `uv run bidqa user reset admin --password <新口令>` 改密")
+        if settings.ADMIN_USERNAME in names and store.verify_password_ok(
+                settings.ADMIN_USERNAME, "admin123"):
+            # 对账号真实哈希体检（.env 配置值≠账号实际口令，2026-11-15 P1-5 收口）
+            print("  ⚠ 管理员账号仍在用公开默认口令 admin123（任何非纯本机场景必须改）："
+                  "`uv run bidqa user reset admin --password <新口令>`")
     except Exception as exc:
         print(f"  用户体系  异常（{type(exc).__name__}: {exc}）")
     return 0

@@ -33,6 +33,14 @@ def build_users_store() -> "UsersStore | None":
                 "管理员 %s 以默认口令种子（admin/admin123），请尽快 `bidqa user reset` 改密",
                 s.ADMIN_USERNAME)
     _users_store_cache = store
+    try:
+        if store.verify_password_ok(s.ADMIN_USERNAME, "admin123"):
+            # 对账号真实哈希体检（P1-5 告警升级路径：源码默认空+启动拒绝的强制收口待用户拍板）
+            logging.getLogger("bidqa").warning(
+                "管理员账号 %s 仍在用公开默认口令 admin123——"
+                "请 `uv run bidqa user reset admin --password <新口令>` 改密", s.ADMIN_USERNAME)
+    except Exception:
+        pass  # 体检是尽力而为的告警，不阻塞构建
     return store
 
 
