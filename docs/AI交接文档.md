@@ -36,7 +36,7 @@
 | 会话回放 + UI 输入条轮 | ✅ 2026-11-15 | 会话落库 **schema_v 2**：assistant item 附 done 收尾结构+ts，刷新后来源/工具/图表/耗时/trace 全回放（f36ea36；v1 旧行兼容=仅正文；load_history 投影二元防漏进上下文；真机三态验证过）。UI 输入条扁平化+多行自动长高封顶 128px+右侧按钮纵向叠放+退出登录明确按钮（0378692/c123eb3） |
 | CI / 私有远端 | P0 工程化（用户拍板：以后再弄） | 新仓 `git remote -v` 为空——建私有库 `git remote add origin <url> && git push origin main --tags` |
 | agent 评测快照重跑 | 付费决策 | golden 2026-11-15 扩至 14 例（ag-009 双渠道 ANY-of + ag-014 subject_supplier 新意图）；图谱第 7 类查询 `subject_supplier` 已上线——重跑评测（付费，主模型调用）后旧「13/13」口径作废 |
-| `detail_search` 金额排序 | 功能排期 | 查询类型白名单 + order_by 列白名单 + 工具描述更新；**重构完成后另立一轮**（不在重构 commit 混功能） |
+| `detail_search` 金额排序 | ✅ 2026-11-15 | `order_by`（amount_desc/asc + 中文别名容错归一）仅 detail_search 支持，`ORDER BY award_amount … NULLS LAST`（金额取不到沉底）；聚合/趋势固定口径拒绝（args + bp_query 双层）；真机三态核对 PASS |
 | 会话回放两债 | ✅ 2026-11-15 两债全清 | ①降级直答落库（efbbb4e）：worker 异常分支对称持久化——游客进 guest_history、普通用户附 done 落 PG，刷新后降级回答不再整条消失；②反馈态回查（A7 债②）：`GET /api/conversations/{id}/feedback`（同问题取最新）+ 前端 openConversation 并联回查映射 message.feedback，👍/👎 刷新还原 |
 | 离群值溯源 | 数据排查 | 66 亿（涡阳 BZGY2023CG141）/ 23.7 亿 全局头部可疑值，源 xlsx 不可考——需与甲方核对源表 |
 | embed_store 编码文本不一致 | 工程债（低优先） | dense+sparse 看 `ctx_summary+text`、bm25 词频通道看 `title+text`——改则两处对齐 + 重 ingest 全量；2026-11-10 起空摘要时仅 text，口径见旧记录 |

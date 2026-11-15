@@ -17,10 +17,11 @@ from bidqa.database.bp_schema import (
 def build_bp_query(args: dict[str, Any], reverse: bool = False) -> tuple[str, list[Any]]:
     """D3 查询构建（纯函数，单测锁定白名单与转义；非法字段一律抛 ValueError）。
 
-    args: {query_type(6枚举), keyword?, filters?, top_n?, date_range?}
+    args: {query_type(6枚举), keyword?, filters?, top_n?, date_range?, order_by?}
       filters: {白名单列: 标量}（精确匹配）；date_range: {field(白名单日期列), start?, end?}
       keyword: 全部 query_type 生效——四列（项目名/中标人/标的物/编号）片段匹配，
         聚合类=过滤后聚合；reverse 反向变体仅 detail_search（bp_repo 正向落空兜底）
+      order_by: detail_search 专属排序口径（amount_desc|amount_asc），金额列 NULLS LAST
     reverse: detail_search 反向变体（关键词包含字段值；其余 query_type 忽略）
     """
     query_type = args.get("query_type", "")
@@ -60,6 +61,18 @@ def build_bp_query(args: dict[str, Any], reverse: bool = False) -> tuple[str, li
         top_n = 10
     if not isinstance(top_n, int) or isinstance(top_n, bool) or not 1 <= top_n <= 100:
         raise ValueError("top_n 须为 1..100 整数")
+    # 金额排序（detail_search 专属，2026-11-15）：白名单二选一；聚合/趋势有自己的
+    # 排序口径（TopN=总额降序、趋势=时间序），order_by 串味拒绝（要么生效要么报错）
+    order_sql = "publish_date DESC"
+    if (order_by := args.get("order_by")) is not None:
+        if query_type != "detail_search":
+            raise ValueError("order_by 仅 detail_search 支持（聚合/趋势有固定排序口径）")
+        if order_by == "amount_desc":
+            order_sql = "award_amount DESC"
+        elif order_by == "amount_asc":
+            order_sql = "award_amount ASC"
+        else:
+            raise ValueError("order_by 须为 amount_desc|amount_asc")
     keyword = str(args.get("keyword") or "").strip() or None
     # keyword 对全部查询类型生效（docs/01 §4.3）：四列（项目名/中标人/标的物/编号）
     # 片段匹配，转义后参数化；聚合类=过滤后聚合。此前只在 detail_search 分支生效，
@@ -113,10 +126,9 @@ def build_bp_query(args: dict[str, Any], reverse: bool = False) -> tuple[str, li
             "(char_length(project_name) >= 3 AND %s ILIKE '%%' || project_name || '%%')")
         params.append(str(keyword))
         where_sql = f" WHERE {' AND '.join(where)}"
-    order_col = "publish_date"
     sql = (
         f"SELECT {', '.join(BP_COLUMNS)} FROM bidding_procurement{where_sql} "
-        f"ORDER BY {order_col} DESC NULLS LAST LIMIT %s"
+        f"ORDER BY {order_sql} NULLS LAST LIMIT %s"
     )
     params.append(top_n)
     return sql, params

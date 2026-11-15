@@ -187,3 +187,40 @@ def test_query_type_must_be_in_enum() -> None:
         build_bp_query({"query_type": "drop_table"})
     with pytest.raises(ValueError):
         build_bp_query({"query_type": "detail_search", "top_n": 0})
+
+
+# ── 金额排序（detail_search 专属 order_by；模型此前只能靠正文自排，
+#    会把发布时间序改成金额序式叙述——排序口径应在数据层钉死）──
+def test_query_detail_order_by_amount_desc() -> None:
+    sql, _ = build_bp_query({"query_type": "detail_search", "order_by": "amount_desc"})
+    assert "ORDER BY award_amount DESC NULLS LAST" in sql  # 金额取不到沉底，不冒充最大
+
+
+def test_query_detail_order_by_amount_asc() -> None:
+    sql, _ = build_bp_query({"query_type": "detail_search", "order_by": "amount_asc"})
+    assert "ORDER BY award_amount ASC NULLS LAST" in sql  # NULL 沉底不冒充最小
+
+
+def test_query_detail_default_orders_by_publish_date() -> None:
+    sql, _ = build_bp_query({"query_type": "detail_search"})
+    assert "ORDER BY publish_date DESC NULLS LAST" in sql  # 缺省口径不变
+
+
+def test_query_order_by_rejected_on_aggregate() -> None:
+    """聚合类有自己的排序口径（TopN=总额降序），order_by 串味拒绝（要么生效要么报错）。"""
+    with pytest.raises(ValueError, match="order_by"):
+        build_bp_query({"query_type": "supplier_topn", "order_by": "amount_desc"})
+
+
+def test_query_order_by_whitelist() -> None:
+    with pytest.raises(ValueError, match="order_by"):
+        build_bp_query({"query_type": "detail_search", "order_by": "label; DROP TABLE x"})
+
+
+def test_query_order_by_survives_reverse() -> None:
+    """反向变体保留排序口径（排序与 WHERE 变体正交）。"""
+    sql, _ = build_bp_query(
+        {"query_type": "detail_search", "keyword": "空调采购招标公告",
+         "order_by": "amount_desc"}, reverse=True)
+    assert "ORDER BY award_amount DESC NULLS LAST" in sql
+    assert "char_length(project_name)" in sql

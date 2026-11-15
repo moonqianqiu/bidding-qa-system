@@ -74,6 +74,36 @@ def test_db_args_invalid_rejected() -> None:
         SearchDatabaseArgs.model_validate({"query_type": "drop_table"})
 
 
+# ── order_by 金额排序（detail_search 专属；2026-11-15 功能轮）──
+def test_db_args_order_by_alias_self_heal() -> None:
+    args = SearchDatabaseArgs.model_validate(
+        {"query_type": "detail_search", "order_by": "金额降序"})
+    assert args.order_by == "amount_desc"
+    args2 = SearchDatabaseArgs.model_validate(
+        {"query_type": "detail_search", "order_by": "金额升序"})
+    assert args2.order_by == "amount_asc"
+
+
+def test_db_args_order_by_rejected_on_aggregate() -> None:
+    """聚合类有自己的排序口径（TopN=总额降序），order_by 串味拒绝。"""
+    with pytest.raises(ValidationError):
+        SearchDatabaseArgs.model_validate(
+            {"query_type": "supplier_topn", "order_by": "amount_desc"})
+
+
+def test_db_args_order_by_whitelist() -> None:
+    with pytest.raises(ValidationError):
+        SearchDatabaseArgs.model_validate(
+            {"query_type": "detail_search", "order_by": "publish_date"})
+
+
+def test_db_schema_documents_order_by() -> None:
+    """模型必须在 schema 描述里看到合法值（枚举只活在报错文案=不存在）。"""
+    desc = SearchDatabaseArgs.model_json_schema()["properties"]["order_by"]["description"]
+    for v in ("amount_desc", "amount_asc"):
+        assert v in desc, v
+
+
 # ── graph 工具同款（枚举表不同：subject_freq/amount_agg/...）──
 def test_graph_args_prefix_self_heal() -> None:
     args = SearchGraphArgs.model_validate({"query_type": "subject_f"})

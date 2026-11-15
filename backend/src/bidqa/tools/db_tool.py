@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bidqa.database.bp_repo import BpRepo
 from bidqa.database.bp_schema import QUERY_TYPES
@@ -19,6 +19,14 @@ _QUERY_ALIASES = {
     "标的物": "subject_agg", "地区": "region_agg",
     "趋势": "time_trend", "时间趋势": "time_trend", "明细": "detail_search",
 }
+
+# order_by 中文别名（detail_search 金额排序；直觉叫法全覆盖）
+_ORDER_ALIASES = {
+    "金额降序": "amount_desc", "金额从高到低": "amount_desc", "降序": "amount_desc",
+    "金额升序": "amount_asc", "金额从低到高": "amount_asc", "升序": "amount_asc",
+}
+
+_ORDER_CHOICES = ("amount_desc", "amount_asc")
 
 # 聚合输出标题（文本行/图表/口径来源条目三处共用，单一事实源）
 _AGG_LABELS = {
@@ -46,11 +54,29 @@ class SearchDatabaseArgs(BaseModel):
                     "region 为片段匹配，传『安徽省』或『合肥』都能命中；其余列为等值匹配。")
     top_n: int | None = Field(default=None, ge=1, le=100)
     date_range: dict[str, Any] | None = Field(default=None, description="{field,start,end}")
+    order_by: str | None = Field(
+        default=None,
+        description=f"明细检索结果排序（仅 query_type=detail_search 合法，"
+                    f"{'/'.join(_ORDER_CHOICES)}）：amount_desc=中标金额从高到低，"
+                    "amount_asc=从低到高；缺省按发布时间倒序。聚合/趋势类不支持（有固定排序口径）。")
 
     @field_validator("query_type")
     @classmethod
     def _check_type(cls, v: str) -> str:
         return normalize_choice(v, QUERY_TYPES, _QUERY_ALIASES)
+
+    @field_validator("order_by")
+    @classmethod
+    def _check_order(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return normalize_choice(v, _ORDER_CHOICES, _ORDER_ALIASES, param="order_by")
+
+    @model_validator(mode="after")
+    def _order_only_for_detail(self) -> "SearchDatabaseArgs":
+        if self.order_by is not None and self.query_type != "detail_search":
+            raise ValueError("order_by 仅 detail_search 支持（聚合/趋势有固定排序口径）")
+        return self
 
 
 class SearchDatabaseTool(BaseTool[SearchDatabaseArgs]):
@@ -59,6 +85,7 @@ class SearchDatabaseTool(BaseTool[SearchDatabaseArgs]):
                    "TopN 排名、按月趋势、关键词明细检索。问『多少个/多少钱/前几名/明细』优先用它。"
                    "keyword（如『空调』）对全部查询类型生效：先过滤再聚合/取明细。"
                    "可用 region / subject_matter / winner / purchaser 等白名单列过滤（地区传省或市均可）。"
+                   "明细检索可用 order_by=amount_desc/amount_asc 按中标金额排序（仅 detail_search）。"
                    "金额单位=元。")
     args_model = SearchDatabaseArgs
 
