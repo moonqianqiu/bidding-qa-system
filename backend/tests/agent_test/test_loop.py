@@ -432,6 +432,41 @@ def test_leak_recovery_respects_mounted_subset() -> None:
     assert "search_knowledge" in names
 
 
+def test_inline_leak_recovery_messages_are_protocol_valid() -> None:
+    """P1-12（审计）：C4 内联兜底曾拼出不合规 tool 消息——assistant 无 tool_calls、
+    tool 消息 tool_call_id=""，真实 OpenAI-compatible 端点会 400（FakeChat 不校验
+    协议故恒绿）。修复后恢复轮 messages 必须是合法 FC 序列。"""
+    chat = FakeChat(tools_script=[
+        text_msg("让我调用search_knowledge({\"query\": \"空调\"})查证"),
+        text_msg("依据[1]：空调采购共 12 个项目。"),
+    ])
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
+    r = loop.run("空调采购有哪些？", web_enabled=False)
+    assert r.sources  # 内联兜底真实执行
+    recovery_msgs = chat.calls[-1]["messages"]  # 恢复续写轮收到的完整 messages
+    assistant = recovery_msgs[-2]
+    tool_msg_last = recovery_msgs[-1]
+    assert assistant["role"] == "assistant" and assistant.get("tool_calls"), \
+        "内联兜底的 assistant 消息必须带 tool_calls（OpenAI 协议）"
+    call_id = assistant["tool_calls"][0]["id"]
+    assert call_id and assistant["tool_calls"][0]["function"]["name"] == "search_knowledge"
+    assert tool_msg_last["role"] == "tool" and tool_msg_last["tool_call_id"] == call_id
+
+
+def test_thinking_empty_stream_still_emits_main_body() -> None:
+    """P1-13（审计）：深度思考开启且上游思考流为空时——主循环正文被抑制直播
+    （live=False），_finalize 曾因 body is text 跳过下发 → 答案只落库、SSE 端
+    零正文。修复后补发正文 token。"""
+    chat = FakeChat(tools_script=[text_msg("主循环产出的正文。")], thinking_script=[])
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
+    rec = Recorder()
+    r = loop.run("空调采购有哪些？", thinking=True, thinking_model="thinker-x",
+                 on_event=rec)
+    assert r.answer == "主循环产出的正文。"
+    tokens = [p.get("text", "") for k, p in rec.events if k == "token"]
+    assert "".join(tokens) == "主循环产出的正文。"  # SSE 端必须有正文（原为空=红）
+
+
 def test_clarify_via_tool_records_contract_fields() -> None:
     """C5/D6 动态追问（审计 P0-2）：模型经 ask_clarification 工具追问 → 动态话术
     + 契约字段落位（first_tool/tool_trace——done.tool_name 由此可对账）。原实现

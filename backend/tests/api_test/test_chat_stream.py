@@ -622,3 +622,63 @@ def test_guest_degrade_caches_history(settings_factory, monkeypatch):
             {"role": "user", "content": "问1"}, {"role": "assistant", "content": "依据材料[1]直答。"}]
     finally:
         history_mod.guest_history.clear()
+
+
+# ── 审计 P2-31/P2-32：降级路径对称性（摘要保留 + reset 语义） ──
+class SummaryPg(RecordingPg):
+    """带既有滚动摘要的落库记录器：验证降级 upsert 不抹摘要。"""
+
+    def __init__(self, summary: str):
+        super().__init__()
+        self._summary = summary
+
+    def get_conversation(self, conv_id, viewer_user_id=None, machine_domain=False):
+        return {"id": conv_id, "title": "t",
+                "messages": {"schema_v": 2, "items": [], "summary": self._summary},
+                "provider": "deep", "created_at": None, "updated_at": None}
+
+
+def test_degrade_persists_preserves_prior_summary(settings_factory, monkeypatch):
+    """P2-31（审计）：降级落库曾把 prior_summary 硬编码 ""——任一异常降级直答后
+    该会话 C7 滚动摘要被永久抹掉（docstring 声称「与主路径同构」不成立）。"""
+    from bidqa.auth.identity import Identity
+
+    class BrokenChat(FakeChat):
+        def chat_tools(self, messages, tools, temperature=0.3):
+            raise DataSourceError("chat", "上游连接被重置")
+
+    ident = Identity("user", "22222222-2222-2222-2222-222222222231", "carol", "t-dgs")
+    client2 = _armed_stream_client(settings_factory, monkeypatch, ident)
+    pg = SummaryPg("旧摘要：用户在安徽关注空调")
+    patch_service(monkeypatch, chat=BrokenChat(plain_script=["依据材料[1]直答。"]), pg=pg)
+    conv = "22222222-2222-2222-2222-222222222231"
+    stream_events(client2, {"message": "中标通知书效力？", "conversation_id": conv},
+                  headers={"Authorization": "Bearer t-dgs"})
+    assert pg.upserts, "降级回答应落库"
+    assert pg.upserts[-1]["messages"]["summary"] == "旧摘要：用户在安徽关注空调"  # 不被 "" 抹掉
+
+
+def test_degrade_after_half_stream_emits_reset(settings_factory, monkeypatch):
+    """P2-32（审计）：主路径中途异常切降级不发 reset——已流半截 token 不清空，
+    降级又整段重发 → 客户端「半截+全文」拼接（与 _stream_plain 断流即收口径相反）。
+    修复后 reset 先于降级 status。"""
+    from bidqa.auth.identity import Identity
+
+    class HalfStreamChat(FakeChat):
+        def chat_stream_round(self, messages, tools, temperature=0.3):
+            yield ("content", "半截正文：")
+            raise RuntimeError("上游断流")
+
+    ident = Identity("user", "22222222-2222-2222-2222-222222222232", "carol", "t-dgr")
+    client2 = _armed_stream_client(settings_factory, monkeypatch, ident)
+    patch_service(monkeypatch, chat=HalfStreamChat(plain_script=["降级全文。"]), pg=RecordingPg())
+    events = stream_events(client2, {"message": "中标通知书效力？"},
+                           headers={"Authorization": "Bearer t-dgr"})
+    idx_token = next(i for i, e in enumerate(events)
+                     if e["type"] == "token" and "半截" in e.get("text", ""))
+    idx_reset = next(i for i, e in enumerate(events) if e["type"] == "reset")
+    idx_degrade = next(i for i, e in enumerate(events)
+                       if e["type"] == "status" and e.get("stage") == "降级直答")
+    assert idx_token < idx_reset < idx_degrade  # 半截先清空，降级全文才下发
+    full = "".join(e.get("text", "") for e in events if e["type"] == "token")
+    assert "降级全文。" in full

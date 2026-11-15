@@ -272,8 +272,16 @@ class AgentLoop:
                 result.tool_trace.append([{"name": inline.name, "arguments": inline.arguments}])
                 outcomes = self.runner.run_batch([inline], mounted)  # 挂载子集（P0-1/P1-9）
                 self._collect(outcomes, result)
-                messages.append({"role": "assistant", "content": text})
-                messages.append(outcomes[0].as_tool_message())
+                # 协议合法的 FC 序列（审计 P1-12：assistant 无 tool_calls + tool 消息
+                # tool_call_id="" 会被真实 OpenAI-compatible 端点 400 → 异常冒泡整轮降级）
+                fake_id = f"inline_{self._ms(t0)}"
+                messages.append({"role": "assistant", "content": text,
+                                 "tool_calls": [{"id": fake_id, "type": "function",
+                                                 "function": {"name": inline.name,
+                                                              "arguments": json.dumps(
+                                                                  inline.arguments,
+                                                                  ensure_ascii=False)}}]})
+                messages.append(outcomes[0].as_tool_message(fake_id))
                 events("status", {"stage": "分析中"})
                 msg = self.chat.chat_tools(messages, mounted.openai_schemas(),
                                            temperature=self.temperature)
@@ -303,6 +311,7 @@ class AgentLoop:
                         content_buf.append(chunk)
             except Exception as exc:
                 result.degraded.append(f"thinking_fallback: {exc}")
+            regenerated = bool(content_buf or thinking_buf)
             if content_buf:  # 正文空时思考兜底（C6）
                 body = "".join(content_buf)
             elif thinking_buf:
@@ -310,9 +319,13 @@ class AgentLoop:
                 result.degraded.append("thinking_as_body")
             else:
                 body = text
-                if already_streamed and not leaked_at:
-                    pass  # 无重生成内容，保留已流正文
-            if body is not text:
+                # P1-13：主循环正文在 thinking 模式下被抑制直播（live=False），思考流
+                # 又为空 → 此刻正文从未下发，必须补发（原 body is text 跳过 → SSE 端
+                # 零正文只落库）。口径与非思考分支一致（未流或泄漏 reset 后都补发）。
+                if not already_streamed or leaked_at:
+                    for chunk in _chunk(body):
+                        events("token", {"text": chunk})
+            if regenerated:
                 for chunk in thinking_buf:
                     events("thinking", {"text": chunk})
                 for chunk in _chunk(body):
