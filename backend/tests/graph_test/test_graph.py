@@ -323,6 +323,26 @@ def test_d2_tool_end_to_end(neo: NeoClient) -> None:
     assert empty["empty"] is True
 
 
+def test_subject_supplier_query(neo: NeoClient) -> None:
+    """subject_supplier（标的物→供应商分布）：按标的物过滤 + entity 必填。
+
+    图谱独有语义：沿 (Supplier)-[:WON]->(Project)-[:FOR]->(SubjectMatter) 遍历，
+    与 supplier_topn（entity 过滤供应商名）互补；FOR/WON 每项目至多一条边
+    （单值列 MERGE）→ count/sum 无重复计数。
+    """
+    for row in ROWS:
+        neo.upsert_project(row)
+    rows = neo.query("subject_supplier", entity="IT-G空调")
+    assert [(r["label"], r["projects"], r["total_amount"]) for r in rows] == \
+        [("IT-G供应商甲", 1, 660_000)]
+    # 跨标的物聚合：IT-G 前缀命中空调+电梯两个标的物，归一到同一供应商
+    rows = neo.query("subject_supplier", entity="IT-G")
+    assert [(r["label"], r["projects"], r["total_amount"]) for r in rows] == \
+        [("IT-G供应商甲", 2, 1_860_000)]
+    with pytest.raises(ValueError):
+        neo.query("subject_supplier")  # entity 必填（否则与 supplier_topn 重复）
+
+
 def _stub_pg(rows: list[dict]):
     class StubPg:
         def connection(self):

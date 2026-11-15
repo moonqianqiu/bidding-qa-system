@@ -1,5 +1,5 @@
 """Neo4j 客户端（docs/01 §4.2）：唯一性约束先行（否则 Batch 重跑必重复）+
-五类节点六关系 + 6 类查询模板；慢查询走 session 级超时。金额/时间在 :Project 属性。
+五类节点六关系 + 7 类查询模板；慢查询走 session 级超时。金额/时间在 :Project 属性。
 """
 
 from __future__ import annotations
@@ -9,12 +9,13 @@ from typing import Any
 from neo4j import GraphDatabase
 
 GRAPH_QUERY_TYPES = (
-    "subject_freq",     # 标的物频次
-    "amount_agg",       # 均价与金额分布
-    "supplier_topn",    # 供应商分布
-    "region_dist",      # 地区分布
-    "purchaser_dist",   # 采购人分布
-    "time_trend",       # 时间趋势（按月）
+    "subject_freq",      # 标的物频次
+    "amount_agg",        # 均价与金额分布
+    "supplier_topn",     # 供应商分布（entity 过滤供应商名）
+    "region_dist",       # 地区分布
+    "purchaser_dist",    # 采购人分布
+    "time_trend",        # 时间趋势（按月）
+    "subject_supplier",  # 标的物供应商分布（entity 必填：按标的物找供应商）
 )
 
 # 建图脚本必须先建（docs/01 §4.2 钉死）
@@ -108,7 +109,7 @@ class NeoClient:
     def upsert_project(self, row: dict[str, Any]) -> None:
         self.upsert_projects([row])
 
-    # ── 6 类查询模板（docs/01 §4.2；entity 可选过滤）──
+    # ── 7 类查询模板（docs/01 §4.2；entity 可选过滤，subject_supplier 必填）──
     def query(self, query_type: str, entity: str | None = None,
               top_n: int = 10) -> list[dict]:
         if query_type not in GRAPH_QUERY_TYPES:
@@ -134,6 +135,19 @@ class NeoClient:
                 f"MATCH (su:Supplier)-[:WON]->(p:Project) {where} "
                 "RETURN su.name AS label, count(p) AS projects, sum(p.amount) AS total_amount "
                 "ORDER BY total_amount DESC LIMIT $n", entity=entity or "", n=top_n)
+        if query_type == "subject_supplier":
+            # 标的物→供应商遍历（supplier_topn 只能按供应商名过滤，此查询补
+            # 「标的物为 X 的供应商分布」）；FOR/WON 每项目至多一条边（单值列
+            # MERGE）→ count/sum 无重复计数。无 entity 时与 supplier_topn 全量
+            # 重复，必须拒绝。
+            if not (entity or "").strip():
+                raise ValueError("subject_supplier 须提供 entity（标的物片段）；"
+                                 "按供应商名找公司用 supplier_topn")
+            return self.execute(
+                "MATCH (su:Supplier)-[:WON]->(p:Project)-[:FOR]->(sm:SubjectMatter) "
+                "WHERE toLower(sm.name) CONTAINS toLower($entity) "
+                "RETURN su.name AS label, count(p) AS projects, sum(p.amount) AS total_amount "
+                "ORDER BY total_amount DESC LIMIT $n", entity=entity, n=top_n)
         if query_type == "region_dist":
             return self.execute(
                 "MATCH (p:Project)-[:IN]->(l:Location) "

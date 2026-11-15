@@ -90,6 +90,21 @@ def test_graph_args_invalid_rejected() -> None:
         SearchGraphArgs.model_validate({"query_type": "hack_query"})
 
 
+def test_graph_args_subject_supplier_requires_entity() -> None:
+    """subject_supplier 的 entity 必填（args 层友好报错；neo4j 层同守卫）。"""
+    with pytest.raises(ValidationError):
+        SearchGraphArgs.model_validate({"query_type": "subject_supplier"})
+    args = SearchGraphArgs.model_validate(
+        {"query_type": "subject_supplier", "entity": "空调"})
+    assert args.query_type == "subject_supplier"
+
+
+def test_graph_args_subject_supplier_alias() -> None:
+    args = SearchGraphArgs.model_validate(
+        {"query_type": "标的物供应商", "entity": "空调"})
+    assert args.query_type == "subject_supplier"
+
+
 # ── args schema 自文档化（模型必须能在 schema 里看到枚举值）──
 def test_db_schema_documents_query_types() -> None:
     desc = SearchDatabaseArgs.model_json_schema()["properties"]["query_type"]["description"]
@@ -100,5 +115,5 @@ def test_db_schema_documents_query_types() -> None:
 def test_graph_schema_documents_query_types() -> None:
     desc = SearchGraphArgs.model_json_schema()["properties"]["query_type"]["description"]
     for qt in ("subject_freq", "amount_agg", "supplier_topn", "region_dist",
-               "purchaser_dist", "time_trend"):
+               "purchaser_dist", "time_trend", "subject_supplier"):
         assert qt in desc, qt

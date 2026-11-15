@@ -19,7 +19,9 @@ class SearchKnowledgeArgs(BaseModel):
 
 class SearchKnowledgeTool(BaseTool[SearchKnowledgeArgs]):
     name = "search_knowledge"
-    description = "检索招投标知识库（法规/流程/FAQ）。返回带 [n] 编号的材料文本与来源条目，供引用标注。"
+    description = ("检索招投标知识库（法规/流程/FAQ 等文本知识）。返回带 [n] 编号的材料文本"
+                   "与来源条目，供引用标注。业务库的数据统计/排名/明细问题不要用本工具"
+                   "（走 search_database / search_graph）。")
     args_model = SearchKnowledgeArgs
 
     def __init__(self, retriever: Retriever, chat: ChatClient | None = None,

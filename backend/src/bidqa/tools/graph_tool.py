@@ -1,20 +1,21 @@
-"""D2 search_graph：图谱查询工具（docs/02 D2；6 类枚举引用 §4.2 模板）。"""
+"""D2 search_graph：图谱查询工具（docs/02 D2；7 类枚举引用 §4.2 模板）。"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from bidqa.database.neo4j import GRAPH_QUERY_TYPES, NeoClient
 from bidqa.tools.args_norm import normalize_choice
 from bidqa.tools.base import BaseTool, empty_result, tool_result
 
-# query_type 中文别名（与 db 工具枚举表不同名易混，别名按图谱六类给足）
+# query_type 中文别名（与 db 工具枚举表不同名易混，别名按图谱七类给足）
 _QUERY_ALIASES = {
     "供应商": "supplier_topn", "供应商TopN": "supplier_topn", "供应商分布": "supplier_topn",
     "采购人": "purchaser_dist", "采购人分布": "purchaser_dist",
     "标的物": "subject_freq", "标的物频次": "subject_freq",
+    "标的物供应商": "subject_supplier", "标的物供应商分布": "subject_supplier",
     "地区": "region_dist", "地区分布": "region_dist",
     "金额": "amount_agg", "均价": "amount_agg", "金额分布": "amount_agg",
     "趋势": "time_trend", "时间趋势": "time_trend",
@@ -31,12 +32,22 @@ class SearchGraphArgs(BaseModel):
     def _check_type(cls, v: str) -> str:
         return normalize_choice(v, GRAPH_QUERY_TYPES, _QUERY_ALIASES)
 
+    @model_validator(mode="after")
+    def _subject_supplier_needs_entity(self) -> "SearchGraphArgs":
+        # 与 neo4j.query 层同守卫（沿用 args+底层的双层校验模式，如 top_n）：
+        # args 层报错让模型零往返自纠，底层校验守住 ingest/cli 等其他调用方
+        if self.query_type == "subject_supplier" and not (self.entity or "").strip():
+            raise ValueError("subject_supplier 须提供 entity（标的物片段）；"
+                             "按供应商名找公司用 supplier_topn")
+        return self
+
 
 class SearchGraphTool(BaseTool[SearchGraphArgs]):
     name = "search_graph"
-    description = ("查询项目关系图谱（Neo4j 实体网络）的**实体维度分布**：主要供应商（中标次数/"
-                   "中标总额排名）、采购人画像、地区分布、标的物频次。问『主要供应商有哪些公司/"
-                   "采购人都谁/供应商分布』这类实体关系问题用它。金额单位=元。")
+    description = ("查询项目关系图谱（Neo4j，实体归一后口径）的**实体维度分布**：标的物为 X 的"
+                   "供应商排名（subject_supplier，entity 传标的物片段）、按供应商名的中标分布、"
+                   "采购人/地区分布、标的物频次。排名统计类问题优先 search_database"
+                   "（业务库明细更全）。金额单位=元。")
     args_model = SearchGraphArgs
 
     def __init__(self, neo: NeoClient):
