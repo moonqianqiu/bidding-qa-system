@@ -11,8 +11,11 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
+import psycopg
 import pytest
+from psycopg import sql
 
+from bidqa.config import Settings
 from bidqa.database.bp_repo import BpRepo
 from bidqa.database.connection import PgConn
 from bidqa.database.conversations import ConversationStore
@@ -31,6 +34,33 @@ def clean_pg(pg_client: PgConn):
     pg_client.connection().execute("DELETE FROM bidding_procurement WHERE batch_id LIKE 'it-%'")
     pg_client.connection().execute("DELETE FROM feedback WHERE trace_id LIKE 'it-%'")
     pg_client.commit()
+
+
+@pytest.fixture()
+def isolated_pg(pg_client: PgConn):
+    """一次性隔离库（P0-7 收口）：真实服务器上临时建 bidqa_it_<8hex> 库，
+    破坏性用例（全局 purge / 游客开关等无 scoped 条件的 SQL）在其上执行，
+    结束整库 DROP——真实开发库零接触（AGENTS：测试不得污染真实仓库）。
+    建库挂在 pg_client 同一套连接参数上；pg_client 先行 skip 时本夹具连带跳过。"""
+    s = Settings(_env_file=".env")  # cwd=backend 时读真实 .env
+    name = f"bidqa_it_{uuid.uuid4().hex[:8]}"
+    admin = psycopg.connect(host=s.POSTGRES_HOST, port=s.POSTGRES_PORT,
+                            dbname=s.POSTGRES_DB, user=s.POSTGRES_USER,
+                            password=s.POSTGRES_PASSWORD, autocommit=True)
+    created = False
+    try:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        created = True
+        client = PgConn(s.POSTGRES_HOST, s.POSTGRES_PORT, name,
+                        s.POSTGRES_USER, s.POSTGRES_PASSWORD)
+        client.ensure_schema()
+        yield client
+        client.close()
+    finally:
+        if created:
+            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)")
+                          .format(sql.Identifier(name)))
+        admin.close()
 
 
 def test_schema_idempotent(pg_client: PgConn) -> None:
@@ -252,58 +282,50 @@ def test_users_store_seed_login_resolve_roundtrip(pg_client: PgConn) -> None:
         pg_client.commit()
 
 
-def test_guest_toggle_and_visibility(pg_client: PgConn) -> None:
-    """游客开关运行时切换 + 会话可见域（user 仅本人 / admin 含机器域 / 机器仅 NULL）。"""
+def test_guest_toggle_and_visibility(isolated_pg: PgConn) -> None:
+    """游客开关运行时切换 + 会话可见域（user 仅本人 / admin 含机器域 / 机器仅 NULL）。
+
+    P0-7：set_guest_enabled 会写真实 app_settings（旧实现 finally 直接 DELETE
+    种子行=污染运行时开关），迁隔离库执行，不再需要任何清理（整库即弃）。"""
     from bidqa.auth.store import UsersStore
 
-    store = UsersStore(pg_client)
-    convs = ConversationStore(pg_client)
-    try:
-        store.set_guest_enabled(False)
-        assert store.login_guest(1) is None  # 关=不可进
-        store.set_guest_enabled(True)
-        guest = store.login_guest(1)
-        assert guest and guest["role"] == "guest"
-        ident = store.resolve(guest["token"])
-        assert ident is not None and ident.user_id is None  # 游客无 users 行
+    store = UsersStore(isolated_pg)
+    convs = ConversationStore(isolated_pg)
+    store.set_guest_enabled(False)
+    assert store.login_guest(1) is None  # 关=不可进
+    store.set_guest_enabled(True)
+    guest = store.login_guest(1)
+    assert guest and guest["role"] == "guest"
+    ident = store.resolve(guest["token"])
+    assert ident is not None and ident.user_id is None  # 游客无 users 行
 
-        # 可见域三元组（_visibility）
-        import uuid as _uuid
+    # 可见域三元组（_visibility）
+    import uuid as _uuid
 
-        mine, other, machine = (str(_uuid.uuid4()) for _ in range(3))
-        uid = store.create_user("IT-auth-bob", "pw", "user")
-        admin_uid = store.create_user("IT-auth-root", "pw", "admin")
-        convs.upsert_conversation(mine, "mine", {"schema_v": 1, "items": []},
-                                  user_id=uid)
-        convs.upsert_conversation(other, "other", {"schema_v": 1, "items": []},
-                                  user_id=admin_uid)
-        convs.upsert_conversation(machine, "machine", {"schema_v": 1, "items": []})
+    mine, other, machine = (str(_uuid.uuid4()) for _ in range(3))
+    uid = store.create_user("IT-auth-bob", "pw", "user")
+    admin_uid = store.create_user("IT-auth-root", "pw", "admin")
+    convs.upsert_conversation(mine, "mine", {"schema_v": 1, "items": []},
+                              user_id=uid)
+    convs.upsert_conversation(other, "other", {"schema_v": 1, "items": []},
+                              user_id=admin_uid)
+    convs.upsert_conversation(machine, "machine", {"schema_v": 1, "items": []})
 
-        assert store.reset_password("IT-auth-bob", "pw2") is not None  # 新契约：成功=吊销会话数
-        got = [c["id"] for c in convs.list_conversations(
-            viewer_user_id=uid, machine_domain=False)]
-        assert mine in got and other not in got and machine not in got
-        got_admin = [c["id"] for c in convs.list_conversations(
-            viewer_user_id=admin_uid, machine_domain=True)]
-        assert {other, machine} <= set(got_admin)  # admin=本人 + 机器域
-        assert mine not in got_admin  # 普通用户的会话对 admin 不可见（隔离）
-        got_machine = [c["id"] for c in convs.list_conversations(
-            viewer_user_id=None, machine_domain=True)]
-        assert machine in got_machine and mine not in got_machine
-        assert convs.get_conversation(other, viewer_user_id=uid,
-                                      machine_domain=False) is None  # 越权=不可见
-        assert convs.delete_conversation(other, viewer_user_id=uid,
-                                         machine_domain=False) is False
-    finally:
-        conn = pg_client.connection()
-        conn.execute("DELETE FROM sessions WHERE user_id IN "
-                     "(SELECT id FROM users WHERE username LIKE 'IT-auth-%')")
-        conn.execute("DELETE FROM users WHERE username LIKE 'IT-auth-%'")
-        conn.execute("DELETE FROM app_settings WHERE key = 'guest_enabled'")
-        conn.execute("DELETE FROM conversations WHERE id::text IN "
-                     "(SELECT id::text FROM conversations WHERE title IN "
-                     "('mine','other','machine'))")
-        pg_client.commit()
+    assert store.reset_password("IT-auth-bob", "pw2") is not None  # 新契约：成功=吊销会话数
+    got = [c["id"] for c in convs.list_conversations(
+        viewer_user_id=uid, machine_domain=False)]
+    assert mine in got and other not in got and machine not in got
+    got_admin = [c["id"] for c in convs.list_conversations(
+        viewer_user_id=admin_uid, machine_domain=True)]
+    assert {other, machine} <= set(got_admin)  # admin=本人 + 机器域
+    assert mine not in got_admin  # 普通用户的会话对 admin 不可见（隔离）
+    got_machine = [c["id"] for c in convs.list_conversations(
+        viewer_user_id=None, machine_domain=True)]
+    assert machine in got_machine and mine not in got_machine
+    assert convs.get_conversation(other, viewer_user_id=uid,
+                                  machine_domain=False) is None  # 越权=不可见
+    assert convs.delete_conversation(other, viewer_user_id=uid,
+                                     machine_domain=False) is False
 
 
 # ── B12 控制台全库会话管理（真实 PG 集成；IT-console- 前缀 try/finally 清理）──
@@ -343,45 +365,48 @@ def test_list_all_conversations_owner_join_and_q_filter(pg_client: PgConn) -> No
         pg_client.commit()
 
 
-def test_purge_empty_protection_window_and_shell_rule(pg_client: PgConn) -> None:
-    """空壳判定（无 assistant 回复）+ 10 分钟保护窗：刚更新过的空壳不被盘点/清删。"""
-    convs = ConversationStore(pg_client)
-    fresh, aged, with_reply = (str(uuid.uuid4()) for _ in range(3))
-    try:
-        convs.upsert_conversation(fresh, "IT-console-新鲜空壳",
-                                  {"schema_v": 1,
-                                   "items": [{"role": "user", "content": "q"}]})
-        convs.upsert_conversation(aged, "IT-console-陈年空壳",
-                                  {"schema_v": 1, "items": []})
-        convs.upsert_conversation(with_reply, "IT-console-有回复",
-                                  {"schema_v": 1,
-                                   "items": [{"role": "user", "content": "q"},
-                                             {"role": "assistant", "content": "a"}]})
-        # 把「陈年空壳」的 updated_at 拨回 11 分钟前（保护窗外）
-        pg_client.connection().execute(
-            "UPDATE conversations SET updated_at = now() - interval '11 minutes' "
-            "WHERE id = %s", (aged,))
+def test_purge_empty_protection_window_and_shell_rule(isolated_pg: PgConn) -> None:
+    """空壳判定（无 assistant 回复）+ 10 分钟保护窗：刚更新过的空壳不被盘点/清删。
 
-        stats = convs.empty_conversations()
-        assert "IT-console-陈年空壳" in stats["samples"] and stats["count"] >= 1
-        # 单行条件直查（判定矩阵精确断言）
-        titles = [r["title"] for r in pg_client.connection().execute(
-            "SELECT title FROM conversations WHERE "
-            f"{ConversationStore._empty_shell_cond()} AND updated_at < "
-            "now() - make_interval(mins => 10)").fetchall()]
-        assert "IT-console-陈年空壳" in titles
-        assert "IT-console-新鲜空壳" not in titles  # 保护窗内不动
-        assert "IT-console-有回复" not in titles  # 有 assistant 回复不算空壳
+    P0-7：purge 的 DELETE 无任何前缀条件=全局删除是**生产行为**（审计红实证：
+    开发库上跑会吞掉非测试空壳行），故用例迁一次性隔离库执行；并保留
+    「非 IT- 前缀陈年空壳同样被删」的镜像断言钉死全局语义，清理随整库即弃。"""
+    convs = ConversationStore(isolated_pg)
+    fresh, aged, with_reply, aged_raw = (str(uuid.uuid4()) for _ in range(4))
+    convs.upsert_conversation(fresh, "IT-console-新鲜空壳",
+                              {"schema_v": 1,
+                               "items": [{"role": "user", "content": "q"}]})
+    convs.upsert_conversation(aged, "IT-console-陈年空壳",
+                              {"schema_v": 1, "items": []})
+    convs.upsert_conversation(aged_raw, "遗留-非前缀空壳",
+                              {"schema_v": 1, "items": []})
+    convs.upsert_conversation(with_reply, "IT-console-有回复",
+                              {"schema_v": 1,
+                               "items": [{"role": "user", "content": "q"},
+                                         {"role": "assistant", "content": "a"}]})
+    # 两个陈年空壳的 updated_at 拨回 11 分钟前（保护窗外）
+    isolated_pg.connection().execute(
+        "UPDATE conversations SET updated_at = now() - interval '11 minutes' "
+        "WHERE id IN (%s, %s)", (aged, aged_raw))
 
-        deleted = convs.purge_empty_conversations()
-        assert deleted >= 1
-        assert convs.get_conversation(aged) is None
-        assert convs.get_conversation(fresh) is not None  # 保护窗内幸存
-        assert convs.get_conversation(with_reply) is not None  # 有回复幸存
-    finally:
-        conn = pg_client.connection()
-        conn.execute("DELETE FROM conversations WHERE title LIKE 'IT-console-%'")
-        pg_client.commit()
+    stats = convs.empty_conversations()
+    assert "IT-console-陈年空壳" in stats["samples"] and stats["count"] >= 2
+    # 单行条件直查（判定矩阵精确断言）
+    titles = [r["title"] for r in isolated_pg.connection().execute(
+        "SELECT title FROM conversations WHERE "
+        f"{ConversationStore._empty_shell_cond()} AND updated_at < "
+        "now() - make_interval(mins => 10)").fetchall()]
+    assert "IT-console-陈年空壳" in titles
+    assert "遗留-非前缀空壳" in titles  # purge 的判定不看前缀（全局语义）
+    assert "IT-console-新鲜空壳" not in titles  # 保护窗内不动
+    assert "IT-console-有回复" not in titles  # 有 assistant 回复不算空壳
+
+    deleted = convs.purge_empty_conversations()
+    assert deleted >= 2
+    assert convs.get_conversation(aged) is None
+    assert convs.get_conversation(aged_raw) is None  # 非前缀空壳一并删除
+    assert convs.get_conversation(fresh) is not None  # 保护窗内幸存
+    assert convs.get_conversation(with_reply) is not None  # 有回复幸存
 
 
 def test_reset_password_revokes_sessions(pg_client: PgConn) -> None:
