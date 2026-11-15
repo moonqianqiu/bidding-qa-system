@@ -21,7 +21,7 @@
 | 类型检查 | pyrefly **49**（基线 56；bad-override ×5 + missing-attribute ×3 已清零，余为 psycopg 行类型噪音） | `uv run --with pyrefly pyrefly check src` |
 | 前端类型 | 绿（`npm run build` 五路由全预渲染） | `cd frontend && npm run build` |
 | e2e 三走向 | `--mutation-check` 免费自证 PASS；真跑调主模型（付费，跑前看 §3 成本） | `bash deploy/e2e-chat.sh --mutation-check` |
-| Agent 评测 | 13/13 工具选择 1.0（快照见旧仓历史；新仓重跑见 §3 收费口径） | `uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent` |
+| Agent 评测 | 13/13 工具选择 1.0（旧快照口径；golden 2026-11-15 扩至 **14 例**且 ag-009 改双渠道预期——见 §3 重跑行，重跑前勿引用旧口径对比） | `uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent` |
 | 图谱归一 | v2.1 完成：curated 映射 **9 项合并**（Purchaser 3504→3495，其余五类不变）；合并实体项目数守恒 PASS；分支/校区/附属误并候选全部未合并 | `python ../data/run/kg_acceptance.py` |
 | 产品定位 | **练习版**（老师评估 + 甲方验收双门槛），PRD 逐项对照 = docs/03 附录B | —— |
 | 旧仓 | `D:/.../bidding-qa-system` **冻结存档**（原地冻结+README 退役声明；数据副本保留），哈希只对应旧历史 | — |
@@ -34,6 +34,7 @@
 |---|---|---|
 | v2.3 双通道付费验收 | ✅ 2026-11-15 三 PASS | 文档图 auto→OCR（PaddleOCR-VL-1.5 原件逐字提取，编号/金额全对）、图表图 auto→describe（远端多模态 Qwen3.8-27B 结构化描述准确）、带图提问 3.8s 直答并引用 BZGY2023CG141 与 ¥12,500,000.00；过程与教训见开发日志 11-15 行。**vision 槽位现为用户定版远端多模态 Qwen3.8-27B（llama.cpp，.env 模型 id 未变）**；OCR=SiliconFlow PaddleOCR-VL-1.5 |
 | CI / 私有远端 | P0 工程化 | 新仓 `git remote -v` 为空——建私有库 `git remote add origin <url> && git push origin main --tags` |
+| agent 评测快照重跑 | 付费决策 | golden 2026-11-15 扩至 14 例（ag-009 双渠道 ANY-of + ag-014 subject_supplier 新意图）；图谱第 7 类查询 `subject_supplier` 已上线——重跑评测（付费，主模型调用）后旧「13/13」口径作废 |
 | `detail_search` 金额排序 | 功能排期 | 查询类型白名单 + order_by 列白名单 + 工具描述更新；**重构完成后另立一轮**（不在重构 commit 混功能） |
 | 离群值溯源 | 数据排查 | 66 亿（涡阳 BZGY2023CG141）/ 23.7 亿 全局头部可疑值，源 xlsx 不可考——需与甲方核对源表 |
 | embed_store 编码文本不一致 | 工程债（低优先） | dense+sparse 看 `ctx_summary+text`、bm25 词频通道看 `title+text`——改则两处对齐 + 重 ingest 全量；2026-11-10 起空摘要时仅 text，口径见旧记录 |
