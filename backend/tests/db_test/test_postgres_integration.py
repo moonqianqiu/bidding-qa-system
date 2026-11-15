@@ -111,6 +111,10 @@ def test_d3_tool_end_to_end(clean_pg: PgConn) -> None:
     assert out["charts"][0]["kind"] == "bar"
     assert "乙公司" in out["charts"][0]["items"][0]["label"] or \
         any("乙公司" in it["label"] for it in out["charts"][0]["items"])
+    # 聚合查询附 1 条统计口径来源（数据类答案不再零出处；方案 A 2026-11-15）
+    assert len(out["sources"]) == 1
+    assert out["sources"][0]["id"].startswith("db:agg:")
+    assert "batch_id" in out["sources"][0]["title"] or "全库" in out["sources"][0]["title"]
 
     detail = tool.run(tool.args_model.model_validate(
         {"query_type": "detail_search", "keyword": "空调"}))

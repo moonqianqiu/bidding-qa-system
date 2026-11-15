@@ -60,7 +60,7 @@ def build_bp_query(args: dict[str, Any], reverse: bool = False) -> tuple[str, li
         top_n = 10
     if not isinstance(top_n, int) or isinstance(top_n, bool) or not 1 <= top_n <= 100:
         raise ValueError("top_n 须为 1..100 整数")
-    keyword = args.get("keyword")
+    keyword = str(args.get("keyword") or "").strip() or None
     # keyword 对全部查询类型生效（docs/01 §4.3）：四列（项目名/中标人/标的物/编号）
     # 片段匹配，转义后参数化；聚合类=过滤后聚合。此前只在 detail_search 分支生效，
     # 聚合类传 keyword 被静默丢弃（「空调的主要供应商」返回过全库 TopN）。唯一例外：

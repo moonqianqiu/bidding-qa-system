@@ -126,6 +126,12 @@ def test_query_keyword_escapes_on_aggregate() -> None:
     assert params[3] == "%空\\%调\\_%"  # 四列同参
 
 
+def test_query_keyword_strips_whitespace() -> None:
+    """LLM 偶发带空白传参（「 空调 」）→ strip 后再 LIKE，避免无谓空结果。"""
+    _, params = build_bp_query({"query_type": "supplier_topn", "keyword": " 空调 "})
+    assert params[0] == "%空调%"
+
+
 def test_query_keyword_survives_reverse_on_aggregate() -> None:
     """keyword 在任何参数组合下都不被静默丢弃：聚合 + reverse 变体仍按正向过滤。"""
     sql, params = build_bp_query({"query_type": "region_agg", "keyword": "空调"},

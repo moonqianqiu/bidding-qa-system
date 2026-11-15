@@ -88,6 +88,9 @@ def test_path_bad_arguments() -> None:
     runner = ToolRunner(make_registry())
     [out] = runner.run_batch([ToolCall("echo", {"text": ""})])  # 违反 min_length
     assert out.ok is False and out.payload["error"] == "bad_arguments"
+    # 自纠闭环最后一跳：detail 必须携带 pydantic 错误文案（模型据此修正参数，
+    # 2026-11-15 审计 P3-8——只回 error 码不回 detail 时此断言能红）
+    assert "min_length" in str(out.payload.get("detail"))
 
 
 def test_parallel_batch_wall_clock() -> None:

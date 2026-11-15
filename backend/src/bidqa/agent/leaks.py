@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
 
 from bidqa.tools.runner import ToolCall
 
@@ -27,7 +26,8 @@ def build_rules(tool_names: list[str]) -> list[tuple[str, re.Pattern[str]]]:
         ("rule4_tag", re.compile(r"</?tool_call>|</?function_call>")),
         # ⑤DeepSeek 系 DSML 工具调用语法（2026-11-15 空回事故实测泄漏形态：
         #   <｜DSML｜tool_calls>/<｜DSML｜invoke name=…>/<｜DSML｜parameter …>，
-        #   开闭标签均含 ｜DSML｜ 前缀；先具体后通用，只收实测形态）
+        #   开标签均含 ｜DSML｜ 前缀）。闭标签实测形态未及，第二分支放宽收
+        #   </DSML 家族——误报后果仅一次 reset+重生成，非数据损坏
         ("rule5_dsml", re.compile(r"<｜/?DSML｜|</｜?DSML")),
     ]
 

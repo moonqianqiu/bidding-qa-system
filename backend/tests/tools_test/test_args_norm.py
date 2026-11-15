@@ -105,6 +105,18 @@ def test_graph_args_subject_supplier_alias() -> None:
     assert args.query_type == "subject_supplier"
 
 
+# ── 多余参数一律拒绝（2026-11-15 审计 P2：extra=ignore 会让跨工具参数串味
+#    被静默吞掉——「keyword=空调」传给 search_graph 曾会返回全库 66 亿榜）──
+def test_db_args_forbid_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        SearchDatabaseArgs.model_validate({"query_type": "subject_agg", "kwyword": "空调"})
+
+
+def test_graph_args_forbid_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        SearchGraphArgs.model_validate({"query_type": "subject_freq", "kwyword": "空调"})
+
+
 # ── args schema 自文档化（模型必须能在 schema 里看到枚举值）──
 def test_db_schema_documents_query_types() -> None:
     desc = SearchDatabaseArgs.model_json_schema()["properties"]["query_type"]["description"]

@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from bidqa.clients.llm import ChatClient
 from bidqa.rag.crag import CRAG_THRESHOLD, crag_retrieve
-from bidqa.rag.retrieve import Retriever
+from bidqa.rag.retrieve import FINAL_TOP_K, Retriever
 from bidqa.tools.base import BaseTool, empty_result, tool_result
 
 
 class SearchKnowledgeArgs(BaseModel):
+    # 多余参数一律拒绝（与 db/graph 工具同哲学，2026-11-15 审计 P2）
+    model_config = ConfigDict(extra="forbid")
+
     query: str = Field(min_length=1, max_length=500, description="检索问题原文")
     top_k: int | None = Field(default=None, ge=1, le=20, description="返回条数上限（缺省用检索参数表 final_top_k）")
 
@@ -31,8 +34,8 @@ class SearchKnowledgeTool(BaseTool[SearchKnowledgeArgs]):
         self.crag_threshold = crag_threshold
 
     def run(self, args: SearchKnowledgeArgs) -> dict[str, Any]:
-        top_k = args.top_k if args.top_k is not None else None
-        result = self.retriever.retrieve(args.query, top_k=top_k) if top_k else self.retriever.retrieve(args.query)
+        top_k = FINAL_TOP_K if args.top_k is None else args.top_k
+        result = self.retriever.retrieve(args.query, top_k=top_k)
         result = crag_retrieve(self.retriever, self.chat, args.query, result,
                                threshold=self.crag_threshold)
         if not result.hits:

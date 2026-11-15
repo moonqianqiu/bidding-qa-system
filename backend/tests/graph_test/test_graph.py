@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from bidqa.database.neo4j import GRAPH_QUERY_TYPES
 from bidqa.ingest.graph_build import (
     MERGE_CONFIDENCE,
     _apply_mapping,
@@ -269,7 +270,7 @@ def _count_one(neo: NeoClient, pattern: str) -> int:
     return int(neo.execute(pattern)[0]["n"])
 
 
-def test_upsert_and_six_queries(neo: NeoClient) -> None:
+def test_upsert_and_queries(neo: NeoClient) -> None:
     for row in ROWS:
         neo.upsert_project(row)
     for row in ROWS:  # MERGE 幂等：重跑不重复建
@@ -294,11 +295,11 @@ def test_upsert_and_six_queries(neo: NeoClient) -> None:
     assert {r["label"] for r in months} == {"2025-01", "2025-02"}
 
 
-def test_six_query_templates_shape(neo: NeoClient) -> None:
-    """查询模板形状冒烟：不依赖图谱现有数据（内容质量由 scoped 断言与 e2e 把关）。"""
-    for qt in ("subject_freq", "amount_agg", "supplier_topn",
-               "region_dist", "purchaser_dist", "time_trend"):
-        rows = neo.query(qt, top_n=5)
+def test_query_templates_shape(neo: NeoClient) -> None:
+    """查询模板形状冒烟（迭代枚举，新增类型不漏）：不依赖图谱现有数据。"""
+    for qt in GRAPH_QUERY_TYPES:
+        # subject_supplier 必填 entity（IT-G 前缀 scoped；图谱无种子时返回空表也过形状）
+        rows = neo.query(qt, entity="IT-G") if qt == "subject_supplier" else neo.query(qt, top_n=5)
         assert isinstance(rows, list)
         for r in rows:
             assert "label" in r and "projects" in r
@@ -318,6 +319,9 @@ def test_d2_tool_end_to_end(neo: NeoClient) -> None:
     assert out["empty"] is False
     assert "IT-G供应商甲" in out["text"]
     assert out["charts"][0]["source"] == "graph"
+    # 聚合查询附 1 条统计口径来源（方案 A 2026-11-15）
+    assert len(out["sources"]) == 1
+    assert out["sources"][0]["id"].startswith("graph:agg:")
     empty = tool.run(tool.args_model.model_validate(
         {"query_type": "supplier_topn", "entity": "不存在的公司XYZ"}))
     assert empty["empty"] is True
@@ -327,8 +331,8 @@ def test_subject_supplier_query(neo: NeoClient) -> None:
     """subject_supplier（标的物→供应商分布）：按标的物过滤 + entity 必填。
 
     图谱独有语义：沿 (Supplier)-[:WON]->(Project)-[:FOR]->(SubjectMatter) 遍历，
-    与 supplier_topn（entity 过滤供应商名）互补；FOR/WON 每项目至多一条边
-    （单值列 MERGE）→ count/sum 无重复计数。
+    与 supplier_topn（entity 过滤供应商名）互补；单批次内每项目至多一条
+    FOR/WON 边（单值列 MERGE），count/sum 无重复计数。
     """
     for row in ROWS:
         neo.upsert_project(row)

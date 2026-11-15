@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from bidqa.database.bp_repo import BpRepo
 from bidqa.database.bp_schema import QUERY_TYPES
@@ -20,8 +20,19 @@ _QUERY_ALIASES = {
     "趋势": "time_trend", "时间趋势": "time_trend", "明细": "detail_search",
 }
 
+# 聚合输出标题（文本行/图表/口径来源条目三处共用，单一事实源）
+_AGG_LABELS = {
+    "subject_agg": "按标的物统计", "region_agg": "按地区统计",
+    "supplier_topn": "中标供应商TopN", "purchaser_topn": "采购人TopN",
+    "time_trend": "按月趋势",
+}
+
 
 class SearchDatabaseArgs(BaseModel):
+    # 多余参数一律拒绝：extra=ignore 会静默吞掉跨工具串味参数（2026-11-15 审计 P2，
+    # 与 bc99b20「参数要么生效要么报错」同哲学）
+    model_config = ConfigDict(extra="forbid")
+
     query_type: str = Field(description=f"查询类型枚举：{'/'.join(QUERY_TYPES)}")
     keyword: str | None = Field(
         default=None, max_length=200,
@@ -68,15 +79,11 @@ class SearchDatabaseTool(BaseTool[SearchDatabaseArgs]):
             text = _format_details(rows)
             return tool_result(text=text, sources=self._detail_sources(rows))
         text, chart = self._aggregate_output(args.query_type, rows)
-        return tool_result(text=text, charts=[chart])
+        return tool_result(text=text, charts=[chart],
+                           sources=[self._aggregate_source(args, rows)])
 
-    # ── 聚合输出：文本 + 图表规格（docs/01 §3.7；id 由 B7 内容寻址补齐）──
+    # ── 聚合输出：文本 + 图表规格 + 口径来源（docs/01 §3.7；id 由 B7 内容寻址补齐）──
     def _aggregate_output(self, query_type: str, rows: list[dict]) -> tuple[str, dict]:
-        label_map = {
-            "subject_agg": "按标的物统计", "region_agg": "按地区统计",
-            "supplier_topn": "中标供应商TopN", "purchaser_topn": "采购人TopN",
-            "time_trend": "按月趋势",
-        }
         lines = []
         items = []
         for row in rows:
@@ -86,7 +93,7 @@ class SearchDatabaseTool(BaseTool[SearchDatabaseArgs]):
             lines.append(f"- {label}：{row['projects']} 个项目，{amount_text}")
             items.append({"label": label, "projects": int(row["projects"]),
                           "amount": amount})
-        title = f"{label_map[query_type]}（项目数与中标金额）"
+        title = f"{_AGG_LABELS[query_type]}（项目数与中标金额）"
         chart = {
             "id": "", "kind": "bar", "title": title, "source": "db",
             "format": "int", "max": None,
@@ -94,6 +101,29 @@ class SearchDatabaseTool(BaseTool[SearchDatabaseArgs]):
             "amounts": [{"label": it["label"], "value": it["amount"]} for it in items],
         }
         return "\n".join(lines), chart
+
+    def _aggregate_source(self, args: SearchDatabaseArgs, rows: list[dict]) -> dict:
+        """聚合结果的统计口径条目（2026-11-15 方案 A）：数据类答案至少带一条
+        诚实出处；不参与正文 [n] 编号（docs/01 §3）。"""
+        scope: list[str] = []
+        if args.keyword:
+            scope.append(f"关键词「{args.keyword.strip()}」")
+        if args.filters:
+            scope.append("、".join(f"{k}={v}" for k, v in args.filters.items()))
+        if args.date_range:
+            dr = args.date_range
+            scope.append(f"{dr.get('field', 'publish_date')}"
+                         f" {dr.get('start') or '…'}~{dr.get('end') or '…'}")
+        scope_text = "；".join(scope) or "全库"
+        return {
+            "id": f"db:agg:{args.query_type}",
+            "source_type": "业务库",
+            "title": f"{_AGG_LABELS[args.query_type]}（{scope_text}）",
+            "text": "业务库 bidding_procurement 聚合统计：按维度分组聚合中标金额；"
+                    f"返回 Top {len(rows)} 分组行，与正文表格/图表同源。",
+            "url": "", "score": None,
+            "meta": {"query_type": args.query_type, "groups": len(rows)},
+        }
 
     def _detail_sources(self, rows: list[dict]) -> list[dict]:
         """明细来源条目（引用契约：正文 [n] ↔ sources 顺序）。"""

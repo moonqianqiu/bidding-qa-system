@@ -1,5 +1,5 @@
 """Neo4j 客户端（docs/01 §4.2）：唯一性约束先行（否则 Batch 重跑必重复）+
-五类节点六关系 + 7 类查询模板；慢查询走 session 级超时。金额/时间在 :Project 属性。
+六类节点六关系 + 7 类查询模板；慢查询走 session 级超时。金额/时间在 :Project 属性。
 """
 
 from __future__ import annotations
@@ -137,8 +137,10 @@ class NeoClient:
                 "ORDER BY total_amount DESC LIMIT $n", entity=entity or "", n=top_n)
         if query_type == "subject_supplier":
             # 标的物→供应商遍历（supplier_topn 只能按供应商名过滤，此查询补
-            # 「标的物为 X 的供应商分布」）；FOR/WON 每项目至多一条边（单值列
-            # MERGE）→ count/sum 无重复计数。无 entity 时与 supplier_topn 全量
+            # 「标的物为 X 的供应商分布」）。**单批次内**每项目至多一条 FOR/WON
+            # 边（单值列 MERGE），count/sum 无重复计数；跨批次同号项目 subject
+            # 值分歧时（F6 并存语义）FOR 可双挂、会 double-count——重建前按
+            # project_no 去重或保证单批次。无 entity 时与 supplier_topn 全量
             # 重复，必须拒绝。
             if not (entity or "").strip():
                 raise ValueError("subject_supplier 须提供 entity（标的物片段）；"

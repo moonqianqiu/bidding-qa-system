@@ -341,7 +341,8 @@ class AgentLoop:
         """重生成一次（附反泄漏指令）；仍泄漏则净化保底。返回 (文本, 是否净化)。"""
         nudged = messages + [{"role": "system", "content":
                               "注意：正文严禁出现任何工具调用语法（调用X(…)/tool_calls JSON/"
-                              "```tool 栅栏/<tool_call> 标签）。直接给出面向用户的回答。"}]
+                              "```tool 栅栏/<tool_call> 标签/DSML 特殊 token（<｜DSML｜…））。"
+                              "直接给出面向用户的回答。"}]
         text = str(self.chat.chat(nudged, temperature=self.temperature))
         if leaks.detect_leak(text, names):
             return leaks.sanitize(text, names), True

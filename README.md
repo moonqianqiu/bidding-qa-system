@@ -2,7 +2,7 @@
 
 > 可自托管的招投标领域 RAG + Agent 问答系统：用户用自然语言提问，系统自动判断去
 > **知识库 / 知识图谱 / 业务数据库 / 联网** 取数，给出**带来源引用**的答案，数字类问题自动配图表。
-> 状态：**v2.3 双通道图片解析完成**（2026-11-14：v2.0 职责拆分 → v2.1 图谱归一 → v2.2 边界/重复收口 → v2.3 双通道图片）——后端测试 459 例、分层守卫 R1-R11、pyrefly 49。
+> 状态：**v2.3 双通道图片解析完成**（2026-11-14：v2.0 职责拆分 → v2.1 图谱归一 → v2.2 边界/重复收口 → v2.3 双通道图片）——后端测试 488 例、分层守卫 R1-R11、pyrefly 49。
 > 本文边界：只回答「这是什么、怎么跑起来、下一份文档读哪个」。
 
 ## 1. 能力与边界
@@ -82,7 +82,7 @@ cd frontend && npm run dev                                            # http://1
 ## 6. 质量与验收
 
 ```bash
-cd backend && uv run pytest -q        # 全量全绿（服务离线时集成例 skip 属预期；当前 459 例）
+cd backend && uv run pytest -q        # 全量全绿（服务离线时集成例 skip 属预期；当前 488 例）
 cd frontend && npx tsc --noEmit
 bash deploy/e2e-chat.sh               # SSE 三走向（机器断言版；真实调用主模型）
 cd backend && uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent

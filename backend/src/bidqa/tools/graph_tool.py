@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bidqa.database.neo4j import GRAPH_QUERY_TYPES, NeoClient
 from bidqa.tools.args_norm import normalize_choice
 from bidqa.tools.base import BaseTool, empty_result, tool_result
 
-# query_type 中文别名（与 db 工具枚举表不同名易混，别名按图谱七类给足）
+# query_type 中文别名（与 db 工具枚举表部分同名但语义不同——图谱口径；
+# 别名按图谱七类给足）
 _QUERY_ALIASES = {
     "供应商": "supplier_topn", "供应商TopN": "supplier_topn", "供应商分布": "supplier_topn",
     "采购人": "purchaser_dist", "采购人分布": "purchaser_dist",
@@ -23,6 +24,10 @@ _QUERY_ALIASES = {
 
 
 class SearchGraphArgs(BaseModel):
+    # 多余参数一律拒绝：extra=ignore 会让跨工具参数串味被静默吞掉（如把
+    # keyword 传给图谱 → 静默丢参返回全库榜，2026-11-15 审计 P2）
+    model_config = ConfigDict(extra="forbid")
+
     query_type: str = Field(description=f"图谱查询类型枚举：{'/'.join(GRAPH_QUERY_TYPES)}")
     entity: str | None = Field(default=None, max_length=100, description="实体名过滤（包含匹配）")
     top_n: int | None = Field(default=None, ge=1, le=100)
@@ -74,4 +79,15 @@ class SearchGraphTool(BaseTool[SearchGraphArgs]):
             "items": [{"label": str(r.get("label") or "（未知）"),
                        "value": int(r["projects"])} for r in rows],
         }
-        return tool_result(text="\n".join(lines), charts=[chart])
+        return tool_result(
+            text="\n".join(lines), charts=[chart],
+            sources=[{
+                # 聚合结果的统计口径条目（2026-11-15 方案 A）：不参与正文 [n] 编号
+                "id": f"graph:agg:{args.query_type}",
+                "source_type": "图谱",
+                "title": ("图谱统计：" + args.query_type
+                          + (f"（{args.entity}）" if args.entity else "")),
+                "text": "Neo4j 实体网络聚合口径（实体归一后）；与正文文本/图表同源。",
+                "url": "", "score": None,
+                "meta": {"query_type": args.query_type, "groups": len(rows)},
+            }])
