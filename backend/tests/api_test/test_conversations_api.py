@@ -78,12 +78,46 @@ def test_feedback_roundtrip(client, pg_client) -> None:  # noqa: ARG001
     assert bad_conv.status_code == 404
 
 
+def test_conversation_feedback_recall(client, pg_client) -> None:  # noqa: ARG001
+    """反馈态回查（A7 债②）：同问题取最新一条；无反馈=空列表；非法/不存在 404。"""
+    from bidqa.database.factory import build_feedback_store
+
+    conv_id, other_id = str(uuid.uuid4()), str(uuid.uuid4())
+    try:
+        ConversationStore(pg_client).upsert_conversation(conv_id, "反馈会话",
+                                      {"schema_v": 1, "items": []})
+        fb = build_feedback_store()
+        fb.insert_feedback(conv_id, "空调采购有哪些？", "up", [], "t1")
+        fb.insert_feedback(conv_id, "空调采购有哪些？", "down", [], "t2")  # 同问题改评
+        fb.insert_feedback(conv_id, "电梯采购呢？", "down", [], "t3")
+        got = client.get(f"/api/conversations/{conv_id}/feedback")
+        assert got.status_code == 200
+        ratings = {r["question"]: r["rating"] for r in got.json()["ratings"]}
+        assert ratings == {"空调采购有哪些？": "down", "电梯采购呢？": "down"}  # 取最新
+
+        ConversationStore(pg_client).upsert_conversation(other_id, "无反馈",
+                                      {"schema_v": 1, "items": []})
+        empty = client.get(f"/api/conversations/{other_id}/feedback")
+        assert empty.status_code == 200 and empty.json() == {"ratings": []}
+
+        assert client.get("/api/conversations/not-a-uuid/feedback").status_code == 404
+        assert client.get(f"/api/conversations/{uuid.uuid4()}/feedback").status_code == 404
+    finally:
+        conn = pg_client.connection()
+        conn.execute("DELETE FROM feedback WHERE conversation_id::text = %s", (conv_id,))
+        conn.execute("DELETE FROM conversations WHERE id::text = ANY(%s)",
+                     ([conv_id, other_id],))
+        pg_client.commit()
+
+
 def test_conversations_degraded_5031(client, settings_factory, monkeypatch) -> None:
     """PG 未配置 → 能力降级如实 5031（不假装成功）。"""
     import bidqa.api.conversations as conv_mod
     monkeypatch.setattr(conv_mod, "build_conversation_store", lambda: None)
     assert client.get("/api/conversations").status_code == 503
     assert client.get("/api/conversations").json()["error_code"] == 5031
+    monkeypatch.setattr(conv_mod, "build_feedback_store", lambda: None)
+    assert client.get(f"/api/conversations/{uuid.uuid4()}/feedback").status_code == 503
 
 
 # ── 用户体系（docs/01 §3.1 会话隔离，端点级；store 替身 + 真实开发库，IT-auth 清理）──
@@ -122,6 +156,8 @@ def test_scoping_isolation_through_endpoint(pg_client, settings_factory, monkeyp
 
         assert client2.get(f"/api/conversations/{ids['a']}", headers=auth).status_code == 200
         assert client2.get(f"/api/conversations/{ids['b']}", headers=auth).status_code == 404  # 越权=404
+        assert client2.get(f"/api/conversations/{ids['b']}/feedback",
+                           headers=auth).status_code == 404  # 反馈回查同口径（不泄漏存在性）
         assert client2.delete(f"/api/conversations/{ids['b']}", headers=auth).status_code == 404
         assert client2.patch(f"/api/conversations/{ids['b']}", headers=auth,
                              json={"title": "夺权"}).status_code == 404

@@ -7,8 +7,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, Conversation } from "@/lib/types";
 import {
-  deleteConversation, getConversation, listConversations, renameConversation,
-  type ConvSummary, type StoredMsg,
+  deleteConversation, getConversation, getConversationFeedback,
+  listConversations, renameConversation,
+  type ConvSummary, type FeedbackRating, type StoredMsg,
 } from "@/lib/api";
 import type { AuthUser } from "@/lib/auth";
 
@@ -18,14 +19,21 @@ function toConversation(s: ConvSummary): Conversation {
 }
 
 /** 服务端 items → 前端消息：v2 assistant item 附 done（来源/工具/图表随 done 回放，
- * 与实时 done 事件同构）；v1 旧行仅正文。 */
-function storedToMessages(items: StoredMsg[]): ChatMessage[] {
-  return items.map((m, i) => ({
-    id: `srv-${i}`, role: m.role, content: m.content, ts: m.ts ?? 0,
-    done: m.done,
-    sources: m.done?.sources,
-    charts: m.done?.charts,
-  }));
+ * 与实时 done 事件同构）；v1 旧行仅正文。反馈态（A7 回查）按「该 assistant 前最近的
+ * user 问题」归属——与发送侧 handleFeedback 的取问题口径一致。 */
+function storedToMessages(items: StoredMsg[], ratings: FeedbackRating[] = []): ChatMessage[] {
+  const byQuestion = new Map(ratings.map((r) => [r.question, r.rating]));
+  let lastQuestion = "";
+  return items.map((m, i) => {
+    if (m.role === "user") lastQuestion = m.content;
+    return {
+      id: `srv-${i}`, role: m.role, content: m.content, ts: m.ts ?? 0,
+      done: m.done,
+      sources: m.done?.sources,
+      charts: m.done?.charts,
+      feedback: m.role === "assistant" ? byQuestion.get(lastQuestion) ?? null : undefined,
+    };
+  });
 }
 
 /** 纯函数版「补丁到最后一条未完成助手消息」（流式渲染路径共用）。 */
@@ -119,16 +127,20 @@ export function useChatSessions(authUser: AuthUser | null) {
       .catch(() => {}); // 列表刷新失败不打断使用
   }, [isGuest]);
 
-  // 打开会话：无正文的（服务端来的摘要）按需拉详情回放正文
+  // 打开会话：无正文的（服务端来的摘要）按需拉详情回放正文；反馈态一并回查
+  // （A7 债②）——反馈拉取失败=无反馈回放，不阻塞正文（两请求独立降级）
   const openConversation = useCallback(
     (id: string) => {
       setActiveId(id);
       const target = convosRef.current.find((c) => c.id === id);
       if (!target || target.messages.length || isGuest) return;
-      getConversation(id)
-        .then((d) => {
+      Promise.all([
+        getConversation(id),
+        getConversationFeedback(id).catch(() => ({ ratings: [] })),
+      ])
+        .then(([d, r]) => {
           setConvos((cur) => cur.map((c) => (c.id === id && c.messages.length === 0
-            ? { ...c, messages: storedToMessages(d.messages.items) } : c)));
+            ? { ...c, messages: storedToMessages(d.messages.items, r.ratings) } : c)));
         })
         .catch(() => {});
     },

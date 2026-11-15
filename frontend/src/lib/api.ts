@@ -104,6 +104,12 @@ export type StoredMsg = {
 export const getConversation = (id: string) =>
   jfetch<ConvDetail>(`/api/conversations/${id}`);
 
+// 反馈态回查（A7）：👍/👎 按问题回读（同问题取最新一条），刷新后还原反馈态
+export type FeedbackRating = { question: string; rating: "up" | "down" };
+
+export const getConversationFeedback = (id: string) =>
+  jfetch<{ ratings: FeedbackRating[] }>(`/api/conversations/${id}/feedback`);
+
 export const deleteConversation = (id: string) =>
   jfetch<{ deleted: string }>(`/api/conversations/${id}`, { method: "DELETE" });
 

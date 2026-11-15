@@ -27,3 +27,15 @@ class FeedbackStore:
             (conversation_id, question, rating, pg_json(sources), trace_id)).fetchone()
         self.connection().commit()
         return int(row["id"])
+
+    def ratings_for_conversation(self, conversation_id: str) -> list[dict]:
+        """会话内反馈态回查（A7 刷新还原）：同问题取最新一条（id DESC）。
+        显式 dict_row 游标：连接默认工厂类型检查器推不出（dict_row 在 connect 时注入）。"""
+        from psycopg.rows import dict_row
+
+        with self.connection().cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                "SELECT DISTINCT ON (question) question, rating FROM feedback "
+                "WHERE conversation_id = %s ORDER BY question, id DESC",
+                (conversation_id,)).fetchall()
+        return [{"question": r["question"], "rating": r["rating"]} for r in rows]

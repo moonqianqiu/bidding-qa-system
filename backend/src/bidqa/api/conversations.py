@@ -106,6 +106,27 @@ def rename_conversation(conv_id: str, payload: RenameRequest, request: Request) 
     return {"id": conv_id, "title": payload.title.strip()}
 
 
+@router.get("/api/conversations/{conv_id}/feedback")
+def list_conversation_feedback(conv_id: str, request: Request) -> Any:
+    """会话反馈态回查（A7 债②）：👍/👎 按问题回读，刷新后前端还原反馈态。
+    归属校验与会话详情同口径（越权一律 404，不泄漏存在性）。"""
+    if not is_uuid(conv_id):
+        return JSONResponse(status_code=404,
+                            content=error_body(EC_NOT_FOUND, "资源不存在"))
+    store = _store_or_5031()
+    if store is None:
+        return _5031()
+    viewer, machine = _scope(request)
+    if store.get_conversation(conv_id, viewer_user_id=viewer,
+                              machine_domain=machine) is None:
+        return JSONResponse(status_code=404,
+                            content=error_body(EC_NOT_FOUND, "资源不存在"))
+    fb = build_feedback_store()
+    if fb is None:
+        return _5031()
+    return {"ratings": fb.ratings_for_conversation(conv_id)}
+
+
 class FeedbackRequest(BaseModel):
     conversation_id: str | None = None
     question: str = Field(min_length=1, max_length=4000)
