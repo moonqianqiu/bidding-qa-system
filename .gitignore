@@ -53,7 +53,9 @@ backend/pytest-of-*/
 backend/tmp????????
 tmp????????
 
-.auto
+# Autoresearch 账本/看板（会话产物不入库）；机械审计脚本 measure.sh 例外入库（P2-2）
+.auto/*
+!.auto/measure.sh
 
 # 汇报物料（2026-11-09 用户指定：加入排除，不入库）
 汇报/
