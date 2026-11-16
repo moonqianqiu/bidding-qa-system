@@ -9,14 +9,14 @@
 1. 读 `AGENTS.md`（硬约束 10 条 + 预算红线）→ `docs/04` §6（一次提问的代码级走读，路径已对齐 v2.0 结构）
 2. 结构速览：`docs/01` §1 分层树——**api=HTTP 适配壳、application=业务用例、工厂在各包 factory.py、组合根只有 container.build_agent_stack**；分层边界由 `tests/test_layering.py` AST 钉死（违规即红）
 3. 拉起服务：`bash deploy/start.sh` → **立刻** `curl 127.0.0.1:8000/api/health` 六组件全 `ok`
-4. 跑验证三连：`cd backend && uv run pytest -q`（488 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
+4. 跑验证三连：`cd backend && uv run pytest -q`（574 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
 
 ## 2. 质量现状（快照，接手时按 §6 复核）
 
 | 项 | 状态 | 复核命令 |
 |---|---|---|
 | 标签 | `v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` → `v2.3-dual-vision` | `git tag -l && git log --oneline -12` |
-| 后端测试 | **488 passed 全绿（含 Neo4j/PG 集成，服务需在线）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
+| 后端测试 | **574 passed 全绿（含 Neo4j/PG 集成，服务需在线；2026-11-16 实跑）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
 | 分层守卫 | `tests/test_layering.py` **R1-R11** 全部空集（永久护栏）+ 每条规则「能红」自检 | `pytest tests/test_layering.py -q` |
 | 类型检查 | pyrefly **49**（基线 56；bad-override ×5 + missing-attribute ×3 已清零，余为 psycopg 行类型噪音） | `uv run --with pyrefly pyrefly check src` |
 | 前端类型 | 绿（`npm run build` 五路由全预渲染） | `cd frontend && npm run build` |
@@ -44,7 +44,7 @@
 | DI 直调残留 | 测试隔离债（低） | `api/system/metrics.py` 的 `_online_stats`、`_qdrant_counts` 读配置走 get_settings()（仅读端点内部，无测试依赖真实 .env，危害低）；新代码一律 Depends |
 | 真实 PDF 语料导入 | 功能候选 | `bidqa ingest pdf` 链路已通（MinerU 云端 + pdfplumber 兜底）；`data/raw/` 为空，语料未灌 |
 | 在线评测开启 | ✅ 2026-11-15 已开启（用户改 .env：`ONLINE_EVAL_ENABLED=true`、`ONLINE_EVAL_SAMPLE_RATE=0.03`） | 真机三验证 PASS：online jsonl 行为指标落盘（rounds/tool/elapsed 免费）、`GET /api/eval/runs` 200（新快照可查）、metrics `online_eval` 节 enabled/behavior=1/queued=0；判分 3% 抽样 + 点踩 100% 必评 |
-| **审计修复 WP0-WP3（进行中）** | 🟡 2026-11-15~16 阶段 0+1+2+3 收口（27 commit，接 AUDIT_2026-11-15.md） | **已修**：P0-7 隔离库、P0-3 429 红线、P0-4 判分缓存、P0-8 部署断链、P1-1 归属校验、P1-2 fail-open、P1-3 live role、P1-4 compare_digest、P1-6 工厂门禁、P1-5 告警路径、P0-1+P1-9 Runner、P1-14/15 图谱 Cypher、**P0-2 澄清工具（付费重跑 33/33=1.0）**、P1-10/11 缓存、P1-12/13+P2-31/32、P1-17~19+P2-15~18 评测口径、**阶段 2**：P1-7 守护池、P1-8 lifespan 四步（PTY 环境信号受限，drill_shutdown.py 留复验）、P1-20+P2-34 双检锁、P1-21 SSE 异步化、P2-4/5/33/39、**阶段 3（前端）**：P0-5 单机死循环（getMe 分流+占位身份）、P0-6 并发发送闸（preparing+inFlightRef+先 abort）、P1-23 反馈错轮+回滚、P1-24 卸载 cleanup、P1-25 refreshList 合并、P1-26 await 切换守卫、P1-27 游客 provider 服务端门禁（变异自证）、A11 日志过滤 UI、A12 单组隐藏切换器、docs/02 A7/A10/A13 如实标注。**验证门：568 passed / layering 3 / pyrefly 49 / tsc+build 绿 / 浏览器真机回归（登录流/发送流/控制台过滤）**。**待做**：阶段 4 文档/CI（P1-5 强制收口、计数刷、.auto 入库、CI 补全）；**挂起待拍板**：P1-5 强制收口、feedback 124 行孤儿点踩 |
+| **审计修复 WP0-WP4** | ✅ 2026-11-15~16 阶段 0+1+2+3+4 全部收口（每轮独立 commit，`git log` 可数；接 AUDIT_2026-11-15.md） | **已修**：P0-7 隔离库、P0-3 429 红线、P0-4 判分缓存、P0-8 部署断链、P1-1 归属校验、P1-2 fail-open、P1-3 live role、P1-4 compare_digest、P1-6 工厂门禁、P1-5 告警路径、P0-1+P1-9 Runner、P1-14/15 图谱 Cypher、**P0-2 澄清工具（付费重跑 33/33=1.0）**、P1-10/11 缓存、P1-12/13+P2-31/32、P1-17~19+P2-15~18 评测口径、**阶段 2**：P1-7 守护池、P1-8 lifespan 四步（PTY 环境信号受限，drill_shutdown.py 留复验）、P1-20+P2-34 双检锁、P1-21 SSE 异步化、P2-4/5/33/39、**阶段 3（前端）**：P0-5 单机死循环、P0-6 并发发送闸、P1-23 反馈错轮+回滚、P1-24 卸载 cleanup、P1-25 refreshList 合并、P1-26 await 切换守卫、P1-27 游客 provider 服务端门禁（变异自证）、A11 日志过滤 UI、A12 单组隐藏切换器；**阶段 4**：P2-1 tempdir 写探测、P2-2 measure.sh 入库+P2-47 文件面、P1-28 5001/5032 契约、子进程导入守卫样板、P1-29 workers 告警化、P1-30 联网名册留空、P1-31 CI 五 job+pyrefly 基线、P1-32/33/34+D1-D25 文档漂移、P2-42 e2e 断言收紧（S4/S5/S6 变异扩条）、P2-49 pycache 清理。**验证门：574 passed / layering 3 / pyrefly 0 new / tsc+build 绿 / measure.sh doc_defects=0 / 浏览器真机回归**。**挂起待拍板**：P1-5 强制收口（需用户 .env 改 ADMIN_PASSWORD + `bidqa user reset`）、feedback 124 行孤儿点踩清除、真实控制台停机演练复验 |
 
 ## 4. 环境与数据速览
 
@@ -70,7 +70,7 @@
 
 - [ ] `git status` 干净；`git log --oneline -12` 覆盖审计修复 WP0-WP4 轮次（每轮独立 commit）
 - [ ] `bash deploy/start.sh` 后 `/api/health` 六组件全 ok
-- [ ] `cd backend && uv run pytest -q` → 488 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
+- [ ] `cd backend && uv run pytest -q` → 574 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
 - [ ] `cd frontend && npm run build` 绿（五路由预渲染）
 - [ ] `bash deploy/e2e-chat.sh --mutation-check` PASS（免费）；真跑三走向属付费动作（跑前告知用户）
 - [ ] `pytest tests/test_layering.py` 3 passed（分层守卫全绿；allowlist 应全空集）
