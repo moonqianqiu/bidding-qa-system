@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  backend:
+  backend-test:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -18,8 +18,39 @@ jobs:
           python-version: "3.14"
       - name: 安装依赖
         run: uv sync
-      - name: 后端测试
+      - name: 后端测试（PG/Neo4j 无服务时集成用例自动 skip）
         run: uv run pytest -q
+
+  backend-guards:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+      - name: 安装依赖
+        run: uv sync
+      - name: 分层守卫 R1-R11
+        run: uv run pytest tests/test_layering.py -q
+      - name: 类型检查（零新增门禁：基线 pyrefly-baseline.json 冻结 49 条存量噪音）
+        run: uv run --with pyrefly pyrefly check src --baseline pyrefly-baseline.json
+
+  docs-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 机械审计（死链/功能点交叉引用/统计/陈旧术语/围栏/内容不变量）
+        run: bash .auto/measure.sh
+
+  e2e-assertor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: e2e 断言器变异自检（离线构造坏流，不调模型）
+        run: PY=python3 bash deploy/e2e-chat.sh --mutation-check
 
   frontend:
     runs-on: ubuntu-latest
@@ -35,3 +66,5 @@ jobs:
         run: npm ci
       - name: 类型检查
         run: npx tsc --noEmit
+      - name: 构建（五路由预渲染）
+        run: npm run build

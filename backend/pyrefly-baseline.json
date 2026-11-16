@@ -1,0 +1,347 @@
+{
+  "errors": [
+    {
+      "column": 16,
+      "path": "src/bidqa/api/ask.py",
+      "name": "bad-return",
+      "concise_description": "Returned type `JSONResponse` is not assignable to declared return type `dict[str, Any]`",
+      "severity": "error"
+    },
+    {
+      "column": 16,
+      "path": "src/bidqa/api/ask.py",
+      "name": "bad-return",
+      "concise_description": "Returned type `JSONResponse` is not assignable to declared return type `dict[str, Any]`",
+      "severity": "error"
+    },
+    {
+      "column": 16,
+      "path": "src/bidqa/api/conversations.py",
+      "name": "bad-return",
+      "concise_description": "Returned type `JSONResponse` is not assignable to declared return type `dict[str, Any]`",
+      "severity": "error"
+    },
+    {
+      "column": 36,
+      "path": "src/bidqa/application/admin/console.py",
+      "name": "no-matching-overload",
+      "concise_description": "No matching overload found for function `psycopg.connection.Connection.execute` called with arguments: (str)",
+      "severity": "error"
+    },
+    {
+      "column": 38,
+      "path": "src/bidqa/application/chat/worker.py",
+      "name": "bad-assignment",
+      "concise_description": "`str | None` is not assignable to attribute `conversation_id` with type `str`",
+      "severity": "error"
+    },
+    {
+      "column": 34,
+      "path": "src/bidqa/application/chat/worker.py",
+      "name": "bad-assignment",
+      "concise_description": "`str | None` is not assignable to attribute `conversation_id` with type `str`",
+      "severity": "error"
+    },
+    {
+      "column": 22,
+      "path": "src/bidqa/auth/factory.py",
+      "name": "unknown-name",
+      "concise_description": "Could not find name `UsersStore`",
+      "severity": "error"
+    },
+    {
+      "column": 29,
+      "path": "src/bidqa/auth/factory.py",
+      "name": "unknown-name",
+      "concise_description": "Could not find name `UsersStore`",
+      "severity": "error"
+    },
+    {
+      "column": 13,
+      "path": "src/bidqa/auth/factory.py",
+      "name": "unbound-name",
+      "concise_description": "`logging` may be uninitialized",
+      "severity": "error"
+    },
+    {
+      "column": 36,
+      "path": "src/bidqa/cli/prune.py",
+      "name": "bad-index",
+      "concise_description": "Cannot index into `tuple[Any, ...]`",
+      "severity": "error"
+    },
+    {
+      "column": 36,
+      "path": "src/bidqa/cli/prune.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 53,
+      "path": "src/bidqa/cli/prune.py",
+      "name": "bad-index",
+      "concise_description": "Cannot index into `tuple[Any, ...]`",
+      "severity": "error"
+    },
+    {
+      "column": 53,
+      "path": "src/bidqa/cli/prune.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 32,
+      "path": "src/bidqa/cli/prune.py",
+      "name": "bad-index",
+      "concise_description": "Cannot index into `tuple[Any, ...]`",
+      "severity": "error"
+    },
+    {
+      "column": 32,
+      "path": "src/bidqa/cli/prune.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 53,
+      "path": "src/bidqa/cli/prune.py",
+      "name": "bad-index",
+      "concise_description": "Cannot index into `tuple[Any, ...]`",
+      "severity": "error"
+    },
+    {
+      "column": 53,
+      "path": "src/bidqa/cli/prune.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 58,
+      "path": "src/bidqa/config.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `Path | Sequence[Path | str] | str` is not assignable to parameter `dotenv_path` with type `PathLike[str] | str | None` in function `dotenv.main.dotenv_values`",
+      "severity": "error"
+    },
+    {
+      "column": 42,
+      "path": "src/bidqa/database/bp_repo.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Composed | SQL | bytes` in function `psycopg.connection.Connection.execute`",
+      "severity": "error"
+    },
+    {
+      "column": 46,
+      "path": "src/bidqa/database/bp_repo.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Composed | SQL | bytes` in function `psycopg.connection.Connection.execute`",
+      "severity": "error"
+    },
+    {
+      "column": 16,
+      "path": "src/bidqa/database/bp_repo.py",
+      "name": "bad-return",
+      "concise_description": "Returned type `tuple[list[tuple[Any, ...]], str]` is not assignable to declared return type `tuple[list[dict[Unknown, Unknown]], str]`",
+      "severity": "error"
+    },
+    {
+      "column": 30,
+      "path": "src/bidqa/database/bp_repo.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Composed | SQL | bytes` in function `psycopg.connection.Connection.execute`",
+      "severity": "error"
+    },
+    {
+      "column": 22,
+      "path": "src/bidqa/database/connection.py",
+      "name": "bad-assignment",
+      "concise_description": "`Connection[dict[str, Any] | tuple[Any, ...]]` is not assignable to attribute `_conn` with type `Connection | None`",
+      "severity": "error"
+    },
+    {
+      "column": 16,
+      "path": "src/bidqa/database/connection.py",
+      "name": "bad-return",
+      "concise_description": "Returned type `Connection | None` is not assignable to declared return type `Connection`",
+      "severity": "error"
+    },
+    {
+      "column": 29,
+      "path": "src/bidqa/database/connection.py",
+      "name": "no-matching-overload",
+      "concise_description": "No matching overload found for function `psycopg.connection.Connection.execute` called with arguments: (str)",
+      "severity": "error"
+    },
+    {
+      "column": 41,
+      "path": "src/bidqa/database/conversations.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Composed | SQL | bytes` in function `psycopg.connection.Connection.execute`",
+      "severity": "error"
+    },
+    {
+      "column": 42,
+      "path": "src/bidqa/database/conversations.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Composed | SQL | bytes` in function `psycopg.connection.Connection.execute`",
+      "severity": "error"
+    },
+    {
+      "column": 41,
+      "path": "src/bidqa/database/conversations.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Composed | SQL | bytes` in function `psycopg.connection.Connection.execute`",
+      "severity": "error"
+    },
+    {
+      "column": 41,
+      "path": "src/bidqa/database/conversations.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Composed | SQL | bytes` in function `psycopg.connection.Connection.execute`",
+      "severity": "error"
+    },
+    {
+      "column": 17,
+      "path": "src/bidqa/database/conversations.py",
+      "name": "bad-index",
+      "concise_description": "Cannot index into `tuple[Any, ...]`",
+      "severity": "error"
+    },
+    {
+      "column": 17,
+      "path": "src/bidqa/database/conversations.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 13,
+      "path": "src/bidqa/database/conversations.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Composed | SQL | bytes` in function `psycopg.connection.Connection.execute`",
+      "severity": "error"
+    },
+    {
+      "column": 20,
+      "path": "src/bidqa/database/conversations.py",
+      "name": "bad-index",
+      "concise_description": "Cannot index into `tuple[Any, ...]`",
+      "severity": "error"
+    },
+    {
+      "column": 13,
+      "path": "src/bidqa/database/conversations.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Composed | SQL | bytes` in function `psycopg.connection.Connection.execute`",
+      "severity": "error"
+    },
+    {
+      "column": 13,
+      "path": "src/bidqa/database/conversations.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Composed | SQL | bytes` in function `psycopg.connection.Connection.execute`",
+      "severity": "error"
+    },
+    {
+      "column": 20,
+      "path": "src/bidqa/database/feedback.py",
+      "name": "bad-index",
+      "concise_description": "Cannot index into `tuple[Any, ...]`",
+      "severity": "error"
+    },
+    {
+      "column": 20,
+      "path": "src/bidqa/database/feedback.py",
+      "name": "unsupported-operation",
+      "concise_description": "`None` is not subscriptable",
+      "severity": "error"
+    },
+    {
+      "column": 50,
+      "path": "src/bidqa/database/neo4j.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Query` in function `neo4j._sync.work.session.Session.run`",
+      "severity": "error"
+    },
+    {
+      "column": 25,
+      "path": "src/bidqa/database/neo4j.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Query` in function `neo4j._sync.work.session.Session.run`",
+      "severity": "error"
+    },
+    {
+      "column": 29,
+      "path": "src/bidqa/database/neo4j.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `str` is not assignable to parameter `query` with type `LiteralString | Query` in function `neo4j._sync.work.session.Session.run`",
+      "severity": "error"
+    },
+    {
+      "column": 25,
+      "path": "src/bidqa/database/qdrant.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `float` is not assignable to parameter `timeout` with type `int | None` in function `qdrant_client.qdrant_client.QdrantClient.__init__`",
+      "severity": "error"
+    },
+    {
+      "column": 26,
+      "path": "src/bidqa/database/qdrant.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `Generator[ExtendedPointId]` is not assignable to parameter `*s` with type `Iterable[str]` in function `set.update`",
+      "severity": "error"
+    },
+    {
+      "column": 24,
+      "path": "src/bidqa/eval/smoke.py",
+      "name": "no-matching-overload",
+      "concise_description": "No matching overload found for function `sum` called with arguments: (Generator[bool | int | str | Any])",
+      "severity": "error"
+    },
+    {
+      "column": 21,
+      "path": "src/bidqa/eval/smoke.py",
+      "name": "no-matching-overload",
+      "concise_description": "No matching overload found for function `sum` called with arguments: (Generator[bool | int | str | Any])",
+      "severity": "error"
+    },
+    {
+      "column": 20,
+      "path": "src/bidqa/eval/smoke.py",
+      "name": "no-matching-overload",
+      "concise_description": "No matching overload found for function `sum` called with arguments: (Generator[bool | int | str | Any])",
+      "severity": "error"
+    },
+    {
+      "column": 44,
+      "path": "src/bidqa/ingest/embed_store.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `list[object | None]` is not assignable to parameter `sparse` with type `list[SparseVector | None]` in function `bidqa.database.qdrant.QdrantRepo.upsert`",
+      "severity": "error"
+    },
+    {
+      "column": 33,
+      "path": "src/bidqa/ingest/graph_build.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `list[tuple[Any, ...]]` is not assignable to parameter `rows` with type `list[dict[str, Any]]` in function `extract_entities`",
+      "severity": "error"
+    },
+    {
+      "column": 27,
+      "path": "src/bidqa/ingest/graph_build.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `list[tuple[Any, ...]]` is not assignable to parameter `rows` with type `list[dict[str, Any]]` in function `_apply_mapping`",
+      "severity": "error"
+    },
+    {
+      "column": 45,
+      "path": "src/bidqa/rag/retrieve.py",
+      "name": "bad-argument-type",
+      "concise_description": "Argument `list[float] | None` is not assignable to parameter `question_vector` with type `list[float]` in function `bidqa.database.qdrant.QdrantRepo.query_hybrid`",
+      "severity": "error"
+    }
+  ]
+}
