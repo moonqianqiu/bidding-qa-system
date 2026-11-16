@@ -14,34 +14,80 @@ import pytest
 from bidqa.config import Settings, get_settings
 
 
-def _pin_tempdir_outside_repo() -> None:
+_TEMP_ENV_ORDER = ("TMPDIR", "TEMP", "TMP")
+
+
+def _probe_writable_dir(path: str) -> bool:
+    """真实写探测：能 mkstemp 才算可写。
+
+    审计 P2-1：Windows 的 `os.access(W_OK)` 只看只读属性、不查 ACL——对当前用户
+    不可写的 `C:\\Windows\\Temp` 也返回 True，旧实现据此把它钉成 tempfile 根，
+    导致 34 个用例 error。
+    """
+    try:
+        fd, name = tempfile.mkstemp(dir=path, prefix=".bidqa-temp-probe-")
+    except OSError:
+        return False
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.unlink(name)
+    except OSError:
+        pass
+    return True
+
+
+def _pick_tempdir(candidates, repo: str, probe=_probe_writable_dir) -> str | None:
+    """返回首个「不在仓库内且真实可写」的候选目录；全不可用返回 None。"""
+    repo_abs = os.path.abspath(repo).lower()
+    for cand in candidates:
+        if not cand:
+            continue
+        try:
+            resolved = os.path.abspath(cand)
+        except (TypeError, ValueError):
+            continue
+        if not os.path.isdir(resolved):
+            continue
+        low = resolved.lower()
+        if low == repo_abs or low.startswith(repo_abs + os.sep):
+            continue
+        if probe(resolved):
+            return resolved
+    return None
+
+
+def _pin_tempdir_outside_repo(repo: str | None = None) -> None:
     """落盘隔离（AGENTS「测试不得污染真实仓库」红线）：任何环境不向仓库写临时文件。
 
     个别沙箱缺 TEMP/TMP 时 tempfile.gettempdir() 兜底到当前目录（backend/），
     jieba 缓存、pytest 临时根、mkdtemp 产物会全部落进仓库。此处把 tempfile 根
-    钉到系统真实临时目录——pytest 的 tmp_path 根与 jieba 缓存同源受益。
+    钉到可写的系统临时目录——pytest 的 tmp_path 根与 jieba 缓存同源受益。
+    候选序：显式 TMPDIR/TEMP/TMP（审计 P2-1：不再被忽略）→ 当前 gettempdir →
+    LOCALAPPDATA/SystemRoot 兜底；可写性一律用真实写探测判定。
     哨兵用例：test_temp_isolation.py。
     """
-    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if repo is None:
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     try:
-        resolved = os.path.abspath(tempfile.gettempdir())
+        current = tempfile.gettempdir()
     except Exception:
-        resolved = os.getcwd()
-    repo_low = repo.lower()
-    if resolved.lower() != repo_low and not resolved.lower().startswith(repo_low + os.sep):
-        return
-    for cand in (
+        current = ""
+    candidates = [os.environ.get(key, "") for key in _TEMP_ENV_ORDER] + [
+        current,
         os.path.join(os.environ.get("LOCALAPPDATA", ""), "Temp"),
         os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Temp"),
         "/tmp",
-    ):
-        if cand and os.path.isdir(cand) and os.access(cand, os.W_OK):
-            tempfile.tempdir = cand
-            return
-    raise RuntimeError(
-        f"系统临时目录不可用且 tempfile 兜底到仓库内（{resolved}）；"
-        "请设置 TEMP/TMP 环境变量后重跑，避免测试落盘污染仓库"
-    )
+    ]
+    picked = _pick_tempdir(candidates, repo)
+    if picked is None:
+        raise RuntimeError(
+            f"找不到可写的系统临时目录（仓库内 {repo} 禁止落盘）；"
+            "请设置 TMPDIR/TEMP/TMP 环境变量后重跑，避免测试落盘污染仓库"
+        )
+    tempfile.tempdir = picked
 
 
 _pin_tempdir_outside_repo()
