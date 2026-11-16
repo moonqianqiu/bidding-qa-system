@@ -10,10 +10,13 @@ workers=1 是硬性约定（docs/01 §6）。
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger("bidqa.config")
 
 
 class ConfigError(RuntimeError):
@@ -93,12 +96,16 @@ class Settings(BaseSettings):
         return [key for key, value in core.items() if not value.strip()]
 
     def check_worker_count(self) -> None:
-        """workers=1 防呆（docs/01 §6）：检测到多 worker 环境变量即拒绝启动。"""
+        """workers=1 防呆（docs/01 §6）：`cli/serve.py` 显式传 workers=1，uvicorn
+        会忽略 WEB_CONCURRENCY——该变量设多值只会误导运维，故只告警不拒绝启动
+        （审计 P1-29：旧实现据此拒启属误拒；绕过 serve 直接 `uvicorn --workers N`
+        启动是显式违规，由部署文档约束）。"""
         raw = os.environ.get("WEB_CONCURRENCY", "").strip()
         if raw.isdigit() and int(raw) > 1:
-            raise ConfigError(
-                f"WEB_CONCURRENCY={raw}：本项目 workers=1 是硬性约定"
-                "（限流/在线评测/日志缓冲等进程内状态假定单进程）"
+            logger.warning(
+                "WEB_CONCURRENCY=%s 被忽略：workers=1 由 cli/serve.py 写死"
+                "（限流/在线评测/日志缓冲等进程内状态假定单进程）",
+                raw,
             )
 
     def validate_core(self) -> None:

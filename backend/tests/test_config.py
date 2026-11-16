@@ -70,15 +70,24 @@ def test_cors_origins_parsed(settings_factory):
     assert s.cors_origins() == ["http://a.dev", "http://b.dev"]
 
 
-def test_worker_guard_rejects_multi(settings_factory, monkeypatch):
+def test_worker_guard_warns_multi_not_rejects(settings_factory, monkeypatch, caplog):
+    """P1-29：uvicorn 显式 `workers=1` 时会忽略 WEB_CONCURRENCY——旧防呆据此
+    拒绝启动只会误拒运维（该变量根本改变不了 worker 数）。改为告警不拒。"""
+    import logging
+
     monkeypatch.setenv("WEB_CONCURRENCY", "2")
-    with pytest.raises(ConfigError):
-        settings_factory().check_worker_count()
+    with caplog.at_level(logging.WARNING, logger="bidqa.config"):
+        settings_factory().check_worker_count()  # 不抛
+    assert any("WEB_CONCURRENCY" in r.getMessage() for r in caplog.records)
 
 
-def test_worker_guard_allows_one(settings_factory, monkeypatch):
+def test_worker_guard_allows_one(settings_factory, monkeypatch, caplog):
+    import logging
+
     monkeypatch.setenv("WEB_CONCURRENCY", "1")
-    settings_factory().check_worker_count()  # 不抛即通过
+    with caplog.at_level(logging.WARNING, logger="bidqa.config"):
+        settings_factory().check_worker_count()  # 不抛
+    assert not [r for r in caplog.records if "WEB_CONCURRENCY" in r.getMessage()]
 
 
 def test_web_search_providers_roster():
