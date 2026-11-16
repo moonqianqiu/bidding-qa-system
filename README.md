@@ -2,7 +2,7 @@
 
 > 可自托管的招投标领域 RAG + Agent 问答系统：用户用自然语言提问，系统自动判断去
 > **知识库 / 知识图谱 / 业务数据库 / 联网** 取数，给出**带来源引用**的答案，数字类问题自动配图表。
-> 状态：**v2.4 审计修复完成**（2026-11-16：v2.3 双通道图片之后，按 AUDIT_2026-11-15 完成 8 P0 修复与 WP0-WP4 收口）——后端测试 574 例、分层守卫 R1-R11、pyrefly 49（零新增门禁）。
+> 状态：**v2.4 审计修复完成**（2026-11-16：v2.3 双通道图片之后，按 AUDIT_2026-11-15 完成 8 P0 修复、WP0-WP4 收口与阶段 5 可做部分）——后端测试 579 例、分层守卫 R1-R11、pyrefly 49（零新增门禁）。
 > 本文边界：只回答「这是什么、怎么跑起来、下一份文档读哪个」。
 
 ## 1. 能力与边界
@@ -82,13 +82,13 @@ cd frontend && npm run dev                                            # http://1
 ## 6. 质量与验收
 
 ```bash
-cd backend && uv run pytest -q        # 全量全绿（服务离线时集成例 skip 属预期；当前 574 例）
+cd backend && uv run pytest -q        # 全量全绿（服务离线时集成例 skip 属预期；当前 579 例）
 cd frontend && npx tsc --noEmit
 bash deploy/e2e-chat.sh               # SSE 三走向（机器断言版；真实调用主模型）
 cd backend && uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent
 ```
 
 - 量化验收线（[docs/02 §0.1](./docs/02_功能结构细化.md)）：工具选择 ≥90% · hit_cap <10% · 澄清 100% 触发 · 检索 P95 ≤1.5s
-- 版本标签：`v0.1-scaffold` → `v0.2-m2` → `v0.3-m3` → `v1.0` →（重构线）`v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` → `v2.3-dual-vision` →（审计修复轮 2026-11-15~16，待打 tag）
+- 版本标签：`v0.1-scaffold` → `v0.2-m2` → `v0.3-m3` → `v1.0` →（重构线）`v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` → `v2.3-dual-vision` → `v2.4-audit-repair`（2026-11-16）
 - 测试计数与质量快照以 [AI交接文档 §2](./docs/AI交接文档.md) 为唯一口径（避免本文与实跑漂移）
 - 文档机械审计：`bash .auto/measure.sh`（doc_defects 应为 0）

@@ -417,6 +417,45 @@ def test_build_graph_default_does_not_call_llm() -> None:
     assert result["mapping_items"] == 0
 
 
+def test_build_graph_scope_batch_filters_sql(caplog) -> None:
+    """P1-16：建图 SELECT 曾全表（batch 只用于产物命名）——跨批次同号项目在
+    Neo4j project_no 唯一键下互相覆盖。scope_batch 指定后 SQL 必须带 WHERE。"""
+    import logging
+
+    seen: dict = {}
+
+    class Cur:
+        def execute(self, q, *params):
+            seen["sql"] = q
+            seen["params"] = params
+
+            class R:
+                def fetchall(self):
+                    return []
+            return R()
+
+    class StubPg:
+        def connection(self):
+            return Cur()
+
+    with caplog.at_level(logging.WARNING, logger="bidqa.ingest.graph_build"):
+        result = build_graph(StubPg(), object(), batch="label", scope_batch="it-b1",
+                             dry_run=True)
+    assert "WHERE batch_id" in seen["sql"]
+    assert seen["params"] == (("it-b1",),)  # execute(sql, (batch,)) 的实参形状
+    assert result["batch_scope"] == "it-b1"
+    assert not [r for r in caplog.records if "跨批次" in r.getMessage()]
+
+
+def test_build_graph_unscoped_warns_cross_batch(caplog) -> None:
+    """缺省不限定范围（保持旧行为）时必须显式告警跨批次合并风险。"""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="bidqa.ingest.graph_build"):
+        build_graph(_stub_pg(NORML_ROWS), object(), batch="bt", dry_run=True)
+    assert any("跨批次" in r.getMessage() for r in caplog.records)
+
+
 def test_query_entity_filters_amount_agg_and_purchaser(neo: NeoClient) -> None:
     """审计 P1-14/P1-15：amount_agg+entity 曾生成双 WHERE Cypher 语法错（带过滤
     的均价查询 100% 不可用）；purchaser_dist 曾完全忽略 entity（静默返回全库榜

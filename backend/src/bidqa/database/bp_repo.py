@@ -57,15 +57,22 @@ class BpRepo:
                 count += 1
         return count
 
-    def update_subject_matter(self, mapping: dict[str, str]) -> int:
-        """按 project_name 批量写回标的物（subject-batch fetch --write）；返回更新行数。"""
+    def update_subject_matter(self, mapping: dict[str, str],
+                              batch_id: str | None = None) -> int:
+        """按 project_name 批量写回标的物（subject-batch fetch --write）；返回更新行数。
+
+        P1-16：可指定 batch_id 收窄到单批次——缺省仍按名称全表写回（旧语义），
+        跨批次同号项目会被一起改，调用方需要精确范围时显式传批次。
+        """
         conn = self.connection()
+        where = "project_name = %s" + (" AND batch_id = %s" if batch_id else "")
         updated = 0
         with conn.transaction():  # 批量写回原子性（autocommit 下显式包）
             for name, sm in mapping.items():
+                params = (sm, name, batch_id) if batch_id else (sm, name)
                 cur = conn.execute(
-                    "UPDATE bidding_procurement SET subject_matter = %s, updated_at = now() "
-                    "WHERE project_name = %s",
-                    (sm, name))
+                    f"UPDATE bidding_procurement SET subject_matter = %s, updated_at = now() "
+                    f"WHERE {where}",
+                    params)
                 updated += max(cur.rowcount, 0)
         return updated

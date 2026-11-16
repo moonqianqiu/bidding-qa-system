@@ -36,6 +36,8 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="run 阶段全局调用起点间隔毫秒（默认 500，防触发免费档限流）")
     p_sub.add_argument("--write", action="store_true",
                        help="fetch 阶段写回 PG（默认试运行：只解析落盘不写库）")
+    p_sub.add_argument("--batch-id", default=None,
+                       help="fetch --write 写回范围：指定批次（P1-16）；缺省=全表按项目名")
     p_sub.add_argument("--dry-run", action="store_true", help="build 阶段只打印抽样不落盘")
 
     p_ingest = sub.add_parser("ingest", help="数据入库（docs/02 F 域）")
@@ -51,7 +53,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_db.add_argument("--batch-id", default=None)
     p_db.add_argument("--dry-run", action="store_true")
     p_graph = ingest_sub.add_parser("graph", help="业务库 → Neo4j 图谱（F5）")
-    p_graph.add_argument("--batch-id", default="default")
+    p_graph.add_argument("--batch-id", default="default",
+                         help="产物命名用的批次标签（mapping/review 文件名；不限定数据范围）")
+    p_graph.add_argument("--scope-batch", default=None,
+                         help="建图数据范围：指定=只取该批次行（P1-16）；缺省=全表，"
+                              "跨批次同号项目在 project_no 唯一键下会合并/覆盖（有告警）")
     p_graph.add_argument("--clear", action="store_true", help="清空重建")
     p_graph.add_argument("--dry-run", action="store_true",
                          help="试运行：打条数+抽样+不写库（单独使用不调模型）")

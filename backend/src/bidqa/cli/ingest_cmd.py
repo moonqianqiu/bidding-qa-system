@@ -138,7 +138,8 @@ def _ingest_graph(args) -> int:
         print("提示：未启用 --normalize/--mapping-file，本次为恒等映射预览（零模型调用）")
     result = build_graph(pg, neo, chat=chat, batch=args.batch_id,
                          dry_run=args.dry_run, clear=args.clear,
-                         normalize=args.normalize, mapping_file=args.mapping_file)
+                         normalize=args.normalize, mapping_file=args.mapping_file,
+                         scope_batch=args.scope_batch)
     # 不把上千条映射全量打到终端：摘要 + 产物路径（完整内容在 mapping JSON）
     keys = ("rows", "dry_run", "mapping_items", "review_items", "mapping_source",
             "normalize_calls", "normalize_fields", "oversized_groups",

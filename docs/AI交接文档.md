@@ -9,14 +9,14 @@
 1. 读 `AGENTS.md`（硬约束 10 条 + 预算红线）→ `docs/04` §6（一次提问的代码级走读，路径已对齐 v2.0 结构）
 2. 结构速览：`docs/01` §1 分层树——**api=HTTP 适配壳、application=业务用例、工厂在各包 factory.py、组合根只有 container.build_agent_stack**；分层边界由 `tests/test_layering.py` AST 钉死（违规即红）
 3. 拉起服务：`bash deploy/start.sh` → **立刻** `curl 127.0.0.1:8000/api/health` 六组件全 `ok`
-4. 跑验证三连：`cd backend && uv run pytest -q`（574 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
+4. 跑验证三连：`cd backend && uv run pytest -q`（579 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
 
 ## 2. 质量现状（快照，接手时按 §6 复核）
 
 | 项 | 状态 | 复核命令 |
 |---|---|---|
 | 标签 | `v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` → `v2.3-dual-vision` | `git tag -l && git log --oneline -12` |
-| 后端测试 | **574 passed 全绿（含 Neo4j/PG 集成，服务需在线；2026-11-16 实跑）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
+| 后端测试 | **579 passed 全绿（含 Neo4j/PG 集成，服务需在线；2026-11-16 实跑）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
 | 分层守卫 | `tests/test_layering.py` **R1-R11** 全部空集（永久护栏）+ 每条规则「能红」自检 | `pytest tests/test_layering.py -q` |
 | 类型检查 | pyrefly **49**（基线 56；bad-override ×5 + missing-attribute ×3 已清零，余为 psycopg 行类型噪音） | `uv run --with pyrefly pyrefly check src` |
 | 前端类型 | 绿（`npm run build` 五路由全预渲染） | `cd frontend && npm run build` |
@@ -38,13 +38,13 @@
 | agent 评测快照重跑 | ✅ 2026-11-15 三轮收口 | ①扩例后首跑 30/33=0.909（`agent_20261115_fbecc16_Qwen3.8-27B.json`）；②graph 描述强化（82cc77f）后 33/33=1.0（`agent_20261115_82cc77f_deepseek-flash.json`）；③**审计修复轮**（澄清工具注册 f3442a0 + 图谱 Cypher 修复 17e595e）后重跑 **33/33=1.0**（`agent_20261115_7c34b81_deepseek-flash.json`）——澄清例首次真实走 ask_clarification 工具、图谱 entity 过滤/均价在真实图谱可用（免费探针验证：医院过滤/空调均价 21,184 元/180 项目）。三轮快照名均嵌 JUDGE_MODEL 指纹（用户改过判分模型名），agent 模式均未调判分 |
 | `detail_search` 金额排序 | ✅ 2026-11-15 | `order_by`（amount_desc/asc + 中文别名容错归一）仅 detail_search 支持，`ORDER BY award_amount … NULLS LAST`（金额取不到沉底）；聚合/趋势固定口径拒绝（args + bp_query 双层）；真机三态核对 PASS |
 | 会话回放两债 | ✅ 2026-11-15 两债全清 | ①降级直答落库（efbbb4e）：worker 异常分支对称持久化——游客进 guest_history、普通用户附 done 落 PG，刷新后降级回答不再整条消失；②反馈态回查（A7 债②）：`GET /api/conversations/{id}/feedback`（同问题取最新）+ 前端 openConversation 并联回查映射 message.feedback，👍/👎 刷新还原 |
-| 离群值溯源 | 数据排查 | 66 亿（涡阳 BZGY2023CG141）/ 23.7 亿 全局头部可疑值，源 xlsx 不可考——需与甲方核对源表 |
-| embed_store 编码文本不一致 | 工程债（低优先） | dense+sparse 看 `ctx_summary+text`、bm25 词频通道看 `title+text`——改则两处对齐 + 重 ingest 全量；2026-11-10 起空摘要时仅 text，口径见旧记录 |
+| 离群值溯源 | 🟡 2026-11-16 数据侧定界，核源表待甲方 | 免费盘点（PG 实查）：8,489 行单批次 `sample-2023`，金额中位数 4,600 元、均值 251.2 万元；>1 亿 22 行（0.26%），其中 **BZGY2023CG141 涡阳托养服务 66 亿**为 2,630× 均值、项目性质与金额严重不符（疑源表多写零/单位错）；`content`/`source_url` 全空、`data/raw/` 无源 xlsx——**无法自证原值，须甲方核源表**；按红线不猜测不改写（保留原值并在答案中如实展示） |
+| embed_store 编码文本不一致 | ✅ 2026-11-16 代码统一 / 🟡 存量待重 ingest | 三通道共用 `encode_text(chunk)` = `title`+可选`ctx_summary`+`text`（空段不空行）；新增一致性测试（dense 入参 == bm25 入参，变异可红）。**存量 75 向量仍是旧口径**：重新 ingest 需原始 FAQ xlsx，而 `data/raw/` 为空——xlsx 恢复后执行 `bidqa ingest knowledge --input <xlsx>`（嵌入 API 付费，先报价确认） |
 | clarify.py PROVINCES 词表副本 | ✅ 2026-11-15 收口 | clarify 改导入 `ingest/regions.PROVINCES`（agent→ingest 分层允许，layering 实测确认），历史副本删除；锁定测试 34 省逐一可匹配 + 同对象断言 |
 | DI 直调残留 | 测试隔离债（低） | `api/system/metrics.py` 的 `_online_stats`、`_qdrant_counts` 读配置走 get_settings()（仅读端点内部，无测试依赖真实 .env，危害低）；新代码一律 Depends |
-| 真实 PDF 语料导入 | 功能候选 | `bidqa ingest pdf` 链路已通（MinerU 云端 + pdfplumber 兜底）；`data/raw/` 为空，语料未灌 |
+| 真实 PDF 语料导入 | 🟡 链路就绪，语料缺原件 | `bidqa ingest pdf` 链路已通（MinerU 云端 + pdfplumber 兜底，有契约测试）；`data/raw/` 为空——**缺用户提供 PDF 原件**，命令：`uv run bidqa ingest pdf --input <x.pdf> --source-type 法规 --title "<标题>" --dry-run`（先 dry-run 后真跑；真跑嵌入付费） |
 | 在线评测开启 | ✅ 2026-11-15 已开启（用户改 .env：`ONLINE_EVAL_ENABLED=true`、`ONLINE_EVAL_SAMPLE_RATE=0.03`） | 真机三验证 PASS：online jsonl 行为指标落盘（rounds/tool/elapsed 免费）、`GET /api/eval/runs` 200（新快照可查）、metrics `online_eval` 节 enabled/behavior=1/queued=0；判分 3% 抽样 + 点踩 100% 必评 |
-| **审计修复 WP0-WP4** | ✅ 2026-11-15~16 阶段 0+1+2+3+4 全部收口（每轮独立 commit，`git log` 可数；接 AUDIT_2026-11-15.md） | **已修**：P0-7 隔离库、P0-3 429 红线、P0-4 判分缓存、P0-8 部署断链、P1-1 归属校验、P1-2 fail-open、P1-3 live role、P1-4 compare_digest、P1-6 工厂门禁、P1-5 告警路径、P0-1+P1-9 Runner、P1-14/15 图谱 Cypher、**P0-2 澄清工具（付费重跑 33/33=1.0）**、P1-10/11 缓存、P1-12/13+P2-31/32、P1-17~19+P2-15~18 评测口径、**阶段 2**：P1-7 守护池、P1-8 lifespan 四步（PTY 环境信号受限，drill_shutdown.py 留复验）、P1-20+P2-34 双检锁、P1-21 SSE 异步化、P2-4/5/33/39、**阶段 3（前端）**：P0-5 单机死循环、P0-6 并发发送闸、P1-23 反馈错轮+回滚、P1-24 卸载 cleanup、P1-25 refreshList 合并、P1-26 await 切换守卫、P1-27 游客 provider 服务端门禁（变异自证）、A11 日志过滤 UI、A12 单组隐藏切换器；**阶段 4**：P2-1 tempdir 写探测、P2-2 measure.sh 入库+P2-47 文件面、P1-28 5001/5032 契约、子进程导入守卫样板、P1-29 workers 告警化、P1-30 联网名册留空、P1-31 CI 五 job+pyrefly 基线、P1-32/33/34+D1-D25 文档漂移、P2-42 e2e 断言收紧（S4/S5/S6 变异扩条）、P2-49 pycache 清理。**验证门：574 passed / layering 3 / pyrefly 0 new / tsc+build 绿 / measure.sh doc_defects=0 / 浏览器真机回归**。**挂起待拍板**：P1-5 强制收口（需用户 .env 改 ADMIN_PASSWORD + `bidqa user reset`）、feedback 124 行孤儿点踩清除、真实控制台停机演练复验 |
+| **审计修复 WP0-WP4** | ✅ 2026-11-15~16 阶段 0+1+2+3+4 全部收口（每轮独立 commit，`git log` 可数；接 AUDIT_2026-11-15.md） | **已修**：P0-7 隔离库、P0-3 429 红线、P0-4 判分缓存、P0-8 部署断链、P1-1 归属校验、P1-2 fail-open、P1-3 live role、P1-4 compare_digest、P1-6 工厂门禁、P1-5 告警路径、P0-1+P1-9 Runner、P1-14/15 图谱 Cypher、**P0-2 澄清工具（付费重跑 33/33=1.0）**、P1-10/11 缓存、P1-12/13+P2-31/32、P1-17~19+P2-15~18 评测口径、**阶段 2**：P1-7 守护池、P1-8 lifespan 四步（PTY 环境信号受限，drill_shutdown.py 留复验）、P1-20+P2-34 双检锁、P1-21 SSE 异步化、P2-4/5/33/39、**阶段 3（前端）**：P0-5 单机死循环、P0-6 并发发送闸、P1-23 反馈错轮+回滚、P1-24 卸载 cleanup、P1-25 refreshList 合并、P1-26 await 切换守卫、P1-27 游客 provider 服务端门禁（变异自证）、A11 日志过滤 UI、A12 单组隐藏切换器；**阶段 4**：P2-1 tempdir 写探测、P2-2 measure.sh 入库+P2-47 文件面、P1-28 5001/5032 契约、子进程导入守卫样板、P1-29 workers 告警化、P1-30 联网名册留空、P1-31 CI 五 job+pyrefly 基线、P1-32/33/34+D1-D25 文档漂移、P2-42 e2e 断言收紧（S4/S5/S6 变异扩条）、P2-49 pycache 清理。**验证门：579 passed / layering 3 / pyrefly 0 new / tsc+build 绿 / measure.sh doc_defects=0 / 浏览器真机回归**。**阶段 5（可做部分已收）**：P1-16 batch 作用域（建图 `--scope-batch`、标的物写回 `--batch-id`，缺省全表时告警）、embed_store 三通道编码统一；数据侧：feedback 孤儿点踩 163 行已备份后清除、离群值定量定界待甲方核源表、PDF 语料缺原件（命令就绪）。**挂起待拍板**：P1-5 强制收口（需用户 .env 改 ADMIN_PASSWORD + `bidqa user reset`）、真实控制台停机演练复验 |
 
 ## 4. 环境与数据速览
 
@@ -70,7 +70,7 @@
 
 - [ ] `git status` 干净；`git log --oneline -12` 覆盖审计修复 WP0-WP4 轮次（每轮独立 commit）
 - [ ] `bash deploy/start.sh` 后 `/api/health` 六组件全 ok
-- [ ] `cd backend && uv run pytest -q` → 574 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
+- [ ] `cd backend && uv run pytest -q` → 579 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
 - [ ] `cd frontend && npm run build` 绿（五路由预渲染）
 - [ ] `bash deploy/e2e-chat.sh --mutation-check` PASS（免费）；真跑三走向属付费动作（跑前告知用户）
 - [ ] `pytest tests/test_layering.py` 3 passed（分层守卫全绿；allowlist 应全空集）

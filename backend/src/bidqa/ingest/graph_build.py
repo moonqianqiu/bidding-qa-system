@@ -366,16 +366,26 @@ def build_graph(pg: PgConn, neo: NeoClient, chat: ChatClient | None = None,
                 batch: str = "default", dry_run: bool = False,
                 clear: bool = False, *, normalize: bool = False,
                 mapping_file: str | Path | None = None,
-                batch_size: int = NORMALIZE_BATCH_NAMES) -> dict[str, Any]:
-    """业务库全量行 → 图谱。
+                batch_size: int = NORMALIZE_BATCH_NAMES,
+                scope_batch: str | None = None) -> dict[str, Any]:
+    """业务库行 → 图谱。
 
     映射来源优先级：mapping_file（零模型调用）> normalize+chat（付费分批归一）
     > 恒等映射（默认）。dry_run：打条数+抽样+不写库；normalize 的产物照常落盘。
+    scope_batch（P1-16）：指定=只取该批次行；缺省=全表（保持旧行为，但 Neo4j
+    `project_no` 唯一键下跨批次同号项目会合并/覆盖——显式告警，建图范围要收窄时传批次）。
     """
-    rows = pg.connection().execute(
-        "SELECT project_no, project_name, subject_matter, winner, purchaser, "
-        "agency, region, award_amount, publish_date FROM bidding_procurement"
-    ).fetchall()
+    sql = ("SELECT project_no, project_name, subject_matter, winner, purchaser, "
+           "agency, region, award_amount, publish_date FROM bidding_procurement")
+    if scope_batch:
+        rows = pg.connection().execute(
+            f"{sql} WHERE batch_id = %s", (scope_batch,)).fetchall()
+    else:
+        logger.warning(
+            "建图未限定批次（scope_batch=None）：全表建图，跨批次同号项目在 "
+            "Neo4j project_no 唯一键下会合并/覆盖（docs/01 §4.3）；"
+            "需要按批次建图请传 --scope-batch")
+        rows = pg.connection().execute(sql).fetchall()
     entities = extract_entities(rows)
 
     review: list[dict[str, Any]] = []
@@ -417,6 +427,7 @@ def build_graph(pg: PgConn, neo: NeoClient, chat: ChatClient | None = None,
             for alias, canonical in list(mapping.get(field, {}).items())[:20]:
                 print(f"  合并样例 {field}: {alias} -> {canonical}")
         return {"rows": len(rows), "dry_run": True, "mapping": mapping,
+                "batch_scope": scope_batch,
                 "mapping_items": merged_items, "review": review,
                 "review_items": len(review), "mapping_source": mapping_source,
                 "normalize_calls": stats["calls"],
@@ -432,6 +443,7 @@ def build_graph(pg: PgConn, neo: NeoClient, chat: ChatClient | None = None,
     for row in rows:
         neo.upsert_project(row)
     return {"rows": len(rows), "mapping": mapping,
+            "batch_scope": scope_batch,
             "mapping_items": merged_items, "review": review,
             "review_items": len(review), "mapping_source": mapping_source,
             "normalize_calls": stats["calls"],

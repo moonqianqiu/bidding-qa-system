@@ -107,6 +107,24 @@ def test_upsert_and_queries(clean_pg: PgConn) -> None:
     assert soft["projects"] == 1 and soft["total_amount"] is None  # 取不到=NULL 非 0
 
 
+def test_update_subject_matter_scopes_to_batch(clean_pg: PgConn) -> None:
+    """P1-16：标的物写回曾按 project_name 全表更新——跨批次同号项目被一起改。
+    指定 batch_id 后只改该批次；不指定仍保持全表口径（显式留旧语义）。"""
+    bp, _, _ = _stores(clean_pg)
+    bp.upsert_bp([dict(ROWS[0], subject_matter="旧值-一")], "it-b1")
+    bp.upsert_bp([dict(ROWS[0], subject_matter="旧值-二")], "it-b2")
+    updated = bp.update_subject_matter({"空调采购项目": "新值"}, batch_id="it-b1")
+    assert updated == 1
+    rows = clean_pg.connection().execute(
+        "SELECT batch_id, subject_matter FROM bidding_procurement "
+        "WHERE project_no = %s AND batch_id LIKE 'it-b%%' ORDER BY batch_id",
+        (ROWS[0]["project_no"],)).fetchall()
+    assert [(r["batch_id"], r["subject_matter"]) for r in rows] == [
+        ("it-b1", "新值"), ("it-b2", "旧值-二")]
+    # 缺省 batch_id = 全表写回（既有语义保留）
+    assert bp.update_subject_matter({"空调采购项目": "全量值"}) == 2
+
+
 def test_six_query_types(clean_pg: PgConn) -> None:
     bp, _, _ = _stores(clean_pg)
     bp.upsert_bp([dict(r) for r in ROWS], "it-1")

@@ -101,6 +101,7 @@ def cmd_subject_batch(args, _settings: Any) -> int:
     if repo is None:
         print("PostgreSQL 未配置/不可用", file=sys.stderr)
         return 2
-    updated = repo.update_subject_matter(mapping)
-    print(f"已写回 PG：{updated} 行 subject_matter")
+    updated = repo.update_subject_matter(mapping, batch_id=args.batch_id)
+    scope = f"批次 {args.batch_id}" if args.batch_id else "全表（按项目名）"
+    print(f"已写回 PG：{updated} 行 subject_matter（范围：{scope}）")
     return 0
