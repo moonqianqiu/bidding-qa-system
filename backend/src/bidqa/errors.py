@@ -18,7 +18,7 @@ EC_PAYLOAD_TOO_LARGE = 4131  # 上传体积超限
 EC_RATE_LIMITED = 4291  # 触发限流（响应带 Retry-After）
 EC_INTERNAL = 5001  # 未分类服务端错误
 EC_SOURCE_DEGRADED = 5031  # 数据源降级/不可用
-EC_JUDGE_FINGERPRINT = 5032  # 判分模型异源校验失败
+EC_JUDGE_FINGERPRINT = 5032  # 判分模型异源校验失败（仅 CLI/函数层，无 HTTP 映射；P1-28）
 
 
 def error_body(code: int, message: str, detail: object | None = None) -> dict:

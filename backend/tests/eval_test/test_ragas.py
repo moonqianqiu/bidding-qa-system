@@ -25,8 +25,9 @@ def test_fingerprint_identical_rejected_5032() -> None:
     """端点+凭据+模型完全相同 → 5032 拒跑（防自评作弊）。"""
     s = FakeSettings()
     s.JUDGE_BASE_URL, s.JUDGE_API_KEY, s.JUDGE_MODEL = s.CHAT_BASE_URL, s.CHAT_API_KEY, s.CHAT_MODEL
-    with pytest.raises(JudgeFingerprintError):
+    with pytest.raises(JudgeFingerprintError) as excinfo:
         validate_heterogeneous(s)
+    assert excinfo.value.error_code == 5032  # P1-28：错误码契约正例
 
 
 def test_fingerprint_same_endpoint_warns_but_passes() -> None:
@@ -39,8 +40,9 @@ def test_fingerprint_same_endpoint_warns_but_passes() -> None:
 def test_fingerprint_no_judge_rejected() -> None:
     s = FakeSettings()
     s.has_judge = False
-    with pytest.raises(JudgeFingerprintError):
+    with pytest.raises(JudgeFingerprintError) as excinfo:
         validate_heterogeneous(s)
+    assert excinfo.value.error_code == 5032
 
 
 class FakeJudge:
