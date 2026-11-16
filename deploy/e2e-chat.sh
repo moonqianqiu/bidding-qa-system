@@ -45,7 +45,11 @@ def common(n, label):
     check(f"{label}: 终态事件 done|error", "done" in types or "error" in types, f"末尾 types={types[-6:]}")
     check(f"{label}: 终态唯一", types.count("done") + types.count("error") <= 1, f"count={types.count('done')+types.count('error')}")
     seqs = [e["seq"] for e in ev if isinstance(e.get("seq"), int)]
-    check(f"{label}: seq 单调递增", all(b > a for a, b in zip(seqs, seqs[1:])), f"seqs={seqs[:8]}...")
+    # P2-42：旧断言 all(b>a for zip(...)) 在「事件全缺 seq / 只有 1 个事件」时 all([]) 恒真。
+    # 先要求事件数≥2 且每个事件都带整数 seq，再查严格递增。
+    check(f"{label}: seq 覆盖全部事件且≥2", len(ev) >= 2 and len(seqs) == len(ev),
+          f"events={len(ev)} seqs={len(seqs)}")
+    check(f"{label}: seq 单调递增", len(seqs) >= 2 and all(b > a for a, b in zip(seqs, seqs[1:])), f"seqs={seqs[:8]}...")
     done = next((e for e in ev if e.get("type") == "done"), None)
     err = next((e for e in ev if e.get("type") == "error"), None)
     check(f"{label}: 非 error 终态", err is None, f"error={json.dumps(err, ensure_ascii=False)[:200] if err else ''}")
@@ -75,14 +79,30 @@ done = common(3, "S3 业务库")
 if done:
     tc = done.get("tool_calls") or []
     names = [t.get("name") for t in tc if isinstance(t, dict)]
-    flat = json.dumps(tc, ensure_ascii=False)
-    check("S3: tool_calls 含 search_database", "search_database" in names or "search_database" in flat, f"names={names}")
+    # P2-42：旧断言允许「JSON 文本里出现 search_database 即过」——参数里带该词也放行。
+    # 工具口径只看 tool_calls[].name。
+    check("S3: tool_calls 含 search_database", "search_database" in names, f"names={names}")
     charts = done.get("charts") or []
     check("S3: charts 非空且带内容寻址 id",
           bool(charts) and all(isinstance(c, dict) and re.fullmatch(r"[0-9a-f]{12}", str(c.get("id", ""))) for c in charts),
           f"charts={[(c.get('type'), c.get('id')) for c in charts if isinstance(c, dict)]}")
 else:
     check("S3: done 事件存在", False, "无 done")
+
+# ── 变异扩条（P2-42）：仅在存在 case4/5/6 时执行（真跑不生成这些文件）──
+if (tmp / "case4.sse").exists():
+    _, ev4 = load(4)
+    seqs4 = [e["seq"] for e in ev4 if isinstance(e.get("seq"), int)]
+    check("S4 seq: 事件带整数 seq 且≥2 条", len(ev4) >= 2 and len(seqs4) == len(ev4),
+          f"events={len(ev4)} seqs={seqs4}")
+    check("S4 seq: 严格递增", len(seqs4) >= 2 and all(b > a for a, b in zip(seqs4, seqs4[1:])), f"seqs={seqs4}")
+if (tmp / "case5.sse").exists():
+    done5 = next((e for e in load(5)[1] if e.get("type") == "done"), None)
+    names5 = [t.get("name") for t in ((done5 or {}).get("tool_calls") or []) if isinstance(t, dict)]
+    check("S5: 工具名只在 tool_calls.name 认", "search_database" in names5, f"names={names5}")
+if (tmp / "case6.sse").exists():
+    types6 = [e.get("type") for e in load(6)[1]]
+    check("S6: 终态唯一（重复 done 必须红）", types6.count("done") + types6.count("error") <= 1, f"types={types6}")
 
 print(f"── 断言汇总：{len(failures)} 项失败 ──")
 sys.exit(1 if failures else 0)
@@ -110,28 +130,42 @@ if [ "${1:-}" = "__assert_only__" ]; then
 fi
 
 if [ "${1:-}" = "--mutation-check" ]; then
-  # 变异自检（AGENTS：确认断言真的能红）：喂构造流——S1 缺终态、S2 合格澄清流、S3 图表无 id。
+  # 变异自检（AGENTS：确认断言真的能红）：喂构造流——S1 缺终态、S2 合格澄清流、
+  # S3 图表无 id；P2-42 扩条：S4 事件缺 seq、S5 工具名只藏在 args、S6 重复终态。
   "$PY" - "$TMP" <<'PYEOF'
 import json, pathlib, sys
 tmp = pathlib.Path(sys.argv[1])
 good_done = {"type": "done", "seq": 9, "schema_v": 1, "clarify": True, "sources": [],
              "phase_times": {"澄清提问": 12.5}, "tool_calls": [], "charts": []}
+no_seq_done = {k: v for k, v in good_done.items() if k != "seq"}
 cases = {
     "1": 'data: {"type":"status","seq":1,"stage":"retrieve"}\n\ndata: {"type":"token","seq":2,"text":"部分"}\n\n',
     "2": 'data: {"type":"status","seq":1,"stage":"clarify"}\n\ndata: ' + json.dumps(good_done, ensure_ascii=False) + '\n\n',
     "3": 'data: {"type":"status","seq":1,"stage":"retrieve"}\n\ndata: {"type":"done","seq":2,"schema_v":1,'
          '"sources":[{"n":1}],"tool_calls":[{"name":"search_database"}],"charts":[{"type":"bar","title":"无id"}]}\n\n',
+    # S4：两个事件都不带 seq（旧断言 seqs=[] → all([]) 恒真）
+    "4": 'data: {"type":"status","stage":"clarify"}\n\ndata: ' + json.dumps(no_seq_done, ensure_ascii=False) + '\n\n',
+    # S5：工具名只在参数里（旧「JSON 文本含 search_database 即过」会误放行）
+    "5": 'data: {"type":"status","seq":1,"stage":"retrieve"}\n\ndata: {"type":"done","seq":2,"schema_v":1,'
+         '"sources":[{"n":1}],"tool_calls":[{"args":{"tool":"search_database"}}],'
+         '"charts":[{"type":"bar","id":"0123456789ab"}]}\n\n',
+    # S6：重复终态
+    "6": 'data: {"type":"status","seq":1,"stage":"retrieve"}\n\ndata: ' + json.dumps(good_done, ensure_ascii=False)
+         + '\n\ndata: ' + json.dumps(good_done, ensure_ascii=False) + '\n\n',
 }
 for n, body in cases.items():
     (tmp / f"case{n}.sse").write_text(body, encoding="utf-8")
     (tmp / f"case{n}.code").write_text("200", encoding="utf-8")
 PYEOF
-  echo "── 变异自检：S1/S3 必须出现 FAIL，S2 必须 PASS（断言器咬合力验证）──"
+  echo "── 变异自检：S1/S3/S4/S5/S6 必须出现 FAIL，S2 必须 PASS（断言器咬合力验证）──"
   OUT=$("$0" __assert_only__ "$TMP" 2>&1 | sed -n '/S1 RAG/,/断言汇总/p')
   echo "$OUT"
   if ! echo "$OUT" | grep -q "\[FAIL\] S1 RAG: 终态事件"; then echo "变异自检失败：S1 坏流被放行"; exit 1; fi
   if ! echo "$OUT" | grep -q "\[PASS\] S2: done.clarify=true"; then echo "变异自检失败：S2 好流被误杀"; exit 1; fi
   if ! echo "$OUT" | grep -q "\[FAIL\] S3: charts"; then echo "变异自检失败：S3 坏流被放行"; exit 1; fi
+  if ! echo "$OUT" | grep -q "\[FAIL\] S4 seq: 事件带整数 seq"; then echo "变异自检失败：S4 缺 seq 坏流被放行"; exit 1; fi
+  if ! echo "$OUT" | grep -q "\[FAIL\] S5: 工具名"; then echo "变异自检失败：S5 args 藏名坏流被放行"; exit 1; fi
+  if ! echo "$OUT" | grep -q "\[FAIL\] S6: 终态唯一"; then echo "变异自检失败：S6 重复终态被放行"; exit 1; fi
   echo "变异自检通过：断言器咬得住坏流，不误杀好流"
   exit 0
 fi
