@@ -16,7 +16,7 @@
 | 图谱查询 | Neo4j 标的物-采购人-供应商-代理机构-地区关系网络，7 类查询（含按标的物找供应商），自动出图 |
 | PDF 招标文件解析 | MinerU 云端解析入库，pdfplumber 本地兜底 |
 | 图片双通道解析 | 预览给 Qwen 自动路由（文档类→OCR 读高分辨率原件，照片/图表→结构化描述），可手动「按文档解析」覆盖；OCR 未配置自动退化为通用描述 |
-| 联网检索 | Tavily；默认关、显式开启，带缓存与降级话术 |
+| 联网检索 | Tavily / Exa（`WEB_SEARCH_PROVIDERS` 名册留空=关，显式开启才生效），带缓存与降级话术 |
 | 澄清追问 | 仅首轮、机制级防连问；地区/时间/标的物任一限定即放行检索 |
 | 多轮对话 | 超窗旧对话自动摘要压缩为「前情提要」 |
 | 流式输出 | SSE 七事件协议（ping/seq/schema_v），工具调用文本泄漏防护 |
@@ -33,7 +33,7 @@ frontend/  Next.js 16 + React 19 + Tailwind 4      app 薄壳 + features/chat ·
 backend/   FastAPI（Python 3.14 + uv，src/bidqa）   api · application · agent · tools · rag · clients · database · auth · ingest · eval · obs · cli
 services/  绿色安装数据服务                          Qdrant / PostgreSQL / Neo4j 官方 zip，数据在 data/db/
 deploy/    启停编排脚本                              start / stop / status / e2e / 服务安装
-eval/      黄金集与评测产物                          golden/（用例，入 git）
+eval/      黄金集                                  golden/（用例，入 git）；评测快照在 backend/eval/results/（gitignore）
 ```
 
 - **模型面全 API 化**：本地零 GPU 零模型。主模型 / 视觉 / 判分**三槽位**各自一份
@@ -89,5 +89,6 @@ cd backend && uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode ag
 ```
 
 - 量化验收线（[docs/02 §0.1](./docs/02_功能结构细化.md)）：工具选择 ≥90% · hit_cap <10% · 澄清 100% 触发 · 检索 P95 ≤1.5s
-- 版本标签：`v0.1-scaffold`（M0 奠基）→ `v0.2-m2`（Agent+多源）→ `v0.3-m3`（体验+质量件）→ `v1.0`（收口）
+- 版本标签：`v0.1-scaffold` → `v0.2-m2` → `v0.3-m3` → `v1.0` →（重构线）`v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` → `v2.3-dual-vision`
+- 测试计数与质量快照以 [AI交接文档 §2](./docs/AI交接文档.md) 为唯一口径（避免本文与实跑漂移）
 - 文档机械审计：`bash .auto/measure.sh`（doc_defects 应为 0）

@@ -33,6 +33,6 @@ backend/
 
 ## 说明
 
-- `src/bidqa/` 按 api / agent / rag / tools / clients / database / ingest / eval / obs / skills 分层（docs/01 §1）
+- `src/bidqa/` 按 api / application / agent / tools / rag / clients / database / auth / ingest / eval / obs / cli 分层，组合根 `container.py`（docs/01 §1）
 - 所有 `uv` / `pytest` 命令在本目录（backend/）执行；仓库根目录**没有** Python 工程，别在根目录找 src/ 或 .venv
-- 数据服务（Qdrant/PostgreSQL/Neo4j）绿色安装在仓库根 `deploy/`，见 `../README.md` §3.4
+- 数据服务（Qdrant/PostgreSQL/Neo4j）绿色安装在仓库根 `services/`（脚本 `deploy/download-services.sh` + `deploy/install-services.sh`），见 `../README.md` §3

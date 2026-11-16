@@ -58,7 +58,7 @@ def skill_section(text: str | None) -> str:
 
 
 def summary_section(text: str | None) -> str:
-    """[前情提要] 历史压缩摘要（C7 滚动增量，当前恒空）。"""
+    """[前情提要] 历史压缩摘要（C7 滚动增量；有摘要即注入，无摘要/压缩未就绪时为空）。"""
     return f"[前情提要] {text}" if text else ""
 
 

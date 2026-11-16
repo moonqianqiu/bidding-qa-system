@@ -2,7 +2,7 @@
 
 > **给接手的 AI 助手 / 未来会话**：项目现在什么状态、还差什么、怎么验证。
 > 分工：规则与红线在 `AGENTS.md`；命令与排障在 `docs/部署手册.md`；图解走读在 `docs/04`；设计细节在 `docs/01-03`。
-> 本文只放**易变的状态**：现状快照、未完成清单、环境速览、检查清单。更新：2026-11-14（v2.0 重构收口）。
+> 本文只放**易变的状态**：现状快照、未完成清单、环境速览、检查清单。更新：2026-11-16（审计修复 WP0-WP3 收口；WP4 文档/CI 收口同轮）。
 
 ## 1. 一分钟上手（下一任先做这四件事）
 
@@ -34,7 +34,7 @@
 |---|---|---|
 | v2.3 双通道付费验收 | ✅ 2026-11-15 三 PASS | 文档图 auto→OCR（PaddleOCR-VL-1.5 原件逐字提取，编号/金额全对）、图表图 auto→describe（远端多模态 Qwen3.8-27B 结构化描述准确）、带图提问 3.8s 直答并引用 BZGY2023CG141 与 ¥12,500,000.00；过程与教训见开发日志 11-15 行。**vision 槽位现为用户定版远端多模态 Qwen3.8-27B（llama.cpp，.env 模型 id 未变）**；OCR=SiliconFlow PaddleOCR-VL-1.5 |
 | 会话回放 + UI 输入条轮 | ✅ 2026-11-15 | 会话落库 **schema_v 2**：assistant item 附 done 收尾结构+ts，刷新后来源/工具/图表/耗时/trace 全回放（f36ea36；v1 旧行兼容=仅正文；load_history 投影二元防漏进上下文；真机三态验证过）。UI 输入条扁平化+多行自动长高封顶 128px+右侧按钮纵向叠放+退出登录明确按钮（0378692/c123eb3） |
-| CI / 私有远端 | P0 工程化（用户拍板：以后再弄） | 新仓 `git remote -v` 为空——建私有库 `git remote add origin <url> && git push origin main --tags` |
+| CI / 私有远端 | P0 工程化（用户拍板：以后再弄） | `ci.yml` 已扩为五 job（后端测试 / 分层守卫+pyrefly 基线 / 文档机械审计 / e2e 断言器变异 / 前端类型+构建）；**新仓 `git remote -v` 为空——Actions 从未触发**。建私有库后 `git remote add origin <url> && git push origin main --tags`，再点一次 CI |
 | agent 评测快照重跑 | ✅ 2026-11-15 三轮收口 | ①扩例后首跑 30/33=0.909（`agent_20261115_fbecc16_Qwen3.8-27B.json`）；②graph 描述强化（82cc77f）后 33/33=1.0（`agent_20261115_82cc77f_deepseek-flash.json`）；③**审计修复轮**（澄清工具注册 f3442a0 + 图谱 Cypher 修复 17e595e）后重跑 **33/33=1.0**（`agent_20261115_7c34b81_deepseek-flash.json`）——澄清例首次真实走 ask_clarification 工具、图谱 entity 过滤/均价在真实图谱可用（免费探针验证：医院过滤/空调均价 21,184 元/180 项目）。三轮快照名均嵌 JUDGE_MODEL 指纹（用户改过判分模型名），agent 模式均未调判分 |
 | `detail_search` 金额排序 | ✅ 2026-11-15 | `order_by`（amount_desc/asc + 中文别名容错归一）仅 detail_search 支持，`ORDER BY award_amount … NULLS LAST`（金额取不到沉底）；聚合/趋势固定口径拒绝（args + bp_query 双层）；真机三态核对 PASS |
 | 会话回放两债 | ✅ 2026-11-15 两债全清 | ①降级直答落库（efbbb4e）：worker 异常分支对称持久化——游客进 guest_history、普通用户附 done 落 PG，刷新后降级回答不再整条消失；②反馈态回查（A7 债②）：`GET /api/conversations/{id}/feedback`（同问题取最新）+ 前端 openConversation 并联回查映射 message.feedback，👍/👎 刷新还原 |
@@ -48,7 +48,7 @@
 
 ## 4. 环境与数据速览
 
-- **配置**：`backend/.env`（**用户自己管**，别代改；2026-11-14 已从旧仓逐字节复制，md5 一致）。三槽位 `CHAT_/VISION_/JUDGE_*`；v2.3 增 `OCR_*`（能力型，未配置=图片自动路由退化为 Qwen 通用描述）；
+- **配置**：`backend/.env`（**用户自己管**，别代改；2026-11-14 从旧仓逐字节复制，但 11-15 起用户已自行改过判分模型名、`ONLINE_EVAL_*`、`SUBJECT_BATCH_BASE_URL`——md5 已不再与旧仓一致，以文件实读为准）。三槽位 `CHAT_/VISION_/JUDGE_*`；v2.3 增 `OCR_*`（能力型，未配置=图片自动路由退化为 Qwen 通用描述）；
   `SUBJECT_BATCH_*`=数据加工批量通道（subject-batch 与图谱归一默认通道）；
   `EMBEDDING_/RERANK_`=SiliconFlow；`WEB_SEARCH_PROVIDERS`=联网名册（留空=关）；`CHAT_PROFILES`=命名档；
   `CHAT_MAX_TOKENS`=8192（思考型上游先烧 reasoning，预算不足正文空）；`USERS_ENABLED`=true（admin/admin123 种子，**建议改密**）。
@@ -61,19 +61,19 @@
 
 ## 5. 下任的第一个建议动作
 
-- **要收工程债**：按 §3 前四行做（远端 push → 金额排序 → 离群值 → 词表收口）
+- **要收工程债**：按 §3 未 ✅ 行做（私有远端 push → 真实 PDF 语料导入 → 离群值溯源需甲方 → embed_store 口径重 ingest）
 - **要补功能**：真实 PDF 语料导入（`bidqa ingest pdf --input x.pdf --source-type 法规 --title "..."`，先 dry-run）
 - **要调质量**：先 `eval agent` 留基线快照（付费，跑前算成本），再改工具描述/上下文，对比前后快照
 - **要改代码**：先跑 `pytest tests/test_layering.py` 理解边界——新增依赖若红，说明越层了，回 `docs/01` §3.1 对表
 
 ## 6. 交接检查清单（接手时逐项打勾）
 
-- [ ] `git status` 干净；`git log --oneline -12` 覆盖 C0-C9（基线→重构逐 commit 绿）
+- [ ] `git status` 干净；`git log --oneline -12` 覆盖审计修复 WP0-WP4 轮次（每轮独立 commit）
 - [ ] `bash deploy/start.sh` 后 `/api/health` 六组件全 ok
 - [ ] `cd backend && uv run pytest -q` → 488 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
 - [ ] `cd frontend && npm run build` 绿（五路由预渲染）
 - [ ] `bash deploy/e2e-chat.sh --mutation-check` PASS（免费）；真跑三走向属付费动作（跑前告知用户）
 - [ ] `pytest tests/test_layering.py` 3 passed（分层守卫全绿；allowlist 应全空集）
 - [ ] 读 `docs/04` §6（走读，路径 v2.0 口径）与 `docs/部署手册.md` §6（排障坑表，排障工具在 deploy/diagnosis/）
-- [ ] 确认未动 `.env` 的 VISION / JUDGE 红线（AGENTS.md），`ONLINE_EVAL_ENABLED=false`
+- [ ] 确认未动 `.env` 的 VISION / JUDGE 红线（AGENTS.md）；`ONLINE_EVAL_ENABLED` 与 §3 一致（当前 `true`、采样 0.03）
 - [ ] 确认旧仓未被改动（`git -C ../bidding-qa-system status` 应干净且停在基线提交）
