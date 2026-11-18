@@ -1,9 +1,10 @@
 """C1 上下文构建 + C2 工具表组装（docs/02 C 域）。
 
 C1 模板分节骨架（每节注入条件可独立单测）：
-[角色][技能][前情提要][澄清规则][工具约束][输出格式]
+[角色][技能][前情提要][执行计划][澄清规则][工具约束][输出格式]
 C2 挂载条件与提示词规则同源：基础集无条件；联网仅开关开；澄清仅首轮。
 技能(C9)已建：点名/指代回看两层匹配，由 loop 组装 skill_text 注入；压缩摘要(C7)仍为延后钩子。
+[执行计划]（WP5a）仅 Plan-and-Solve 规划成功时注入（agent/plan.py），无计划恒空。
 """
 
 from __future__ import annotations
@@ -57,6 +58,14 @@ def skill_section(text: str | None) -> str:
     return f"[技能] {text}" if text else ""
 
 
+def plan_section(steps: list[str]) -> str:
+    """[执行计划] Plan-and-Solve 计划节（WP5a）：有计划才注入，无计划/规划失败恒空。"""
+    if not steps:
+        return ""
+    body = " ".join(f"{i}) {s}" for i, s in enumerate(steps, 1))
+    return f"[执行计划] {body}"
+
+
 def summary_section(text: str | None) -> str:
     """[前情提要] 历史压缩摘要（C7 滚动增量；有摘要即注入，无摘要/压缩未就绪时为空）。"""
     return f"[前情提要] {text}" if text else ""
@@ -76,13 +85,17 @@ def tool_section(table: str, *, hit_cap: bool) -> str:
 
 def build_system_prompt(*, tool_table: str, first_round: bool, qualified: bool,
                         skill_text: str | None = None, summary_text: str | None = None,
+                        plan_steps: list[str] | None = None,
                         hit_cap: bool = False, lang: str = "zh") -> str:
-    """C1 拼装。澄清规则仅 history 为空（首轮）时注入；触顶追加收口约束。"""
+    """C1 拼装。澄清规则仅 history 为空（首轮）时注入；触顶追加收口约束。
+    plan_steps=[执行计划] 节（WP5a Plan-and-Solve；仅复合问题规划成功时非空）。"""
     sections = [ROLE_SECTION]
     if skill := skill_section(skill_text):
         sections.append(skill)
     if summ := summary_section(summary_text):
         sections.append(summ)
+    if plan := plan_section(list(plan_steps or [])):
+        sections.append(plan)
     if first_round and not qualified:
         sections.append(CLARIFY_SECTION)
     sections.append(tool_section(tool_table, hit_cap=hit_cap))

@@ -45,6 +45,8 @@ class ChatJob:
     provider: str | None = None
     lang: str = "zh"
     thinking_model: str = ""  # 由 api 层从注入的 Settings 取（application 不读配置）
+    plan_enabled: bool = False     # WP5a Plan-and-Solve 开关（同上：api 层自 AGENT_PLAN_ENABLED 注入）
+    reflect_enabled: bool = False  # WP5a Reflection 证据自检开关（同上：AGENT_REFLECT_ENABLED）
     is_guest: bool = False    # guest=不落库、历史走进程内缓存（docs/01 §3.1）
     user_id: str | None = None  # 落库归属；None=机器域（机器主 token/legacy）
     trace_id: str = ""        # 落库收尾结构携带（与 SSE done 同 id，便于对账）
@@ -161,6 +163,8 @@ def _run_main(job: ChatJob, emit: EventFn) -> JobOutcome:
         first_round=not bool(history),  # 有历史=非首轮（澄清仅首轮，C2）
         on_event=emit,
         lang=job.lang,
+        plan_enabled=job.plan_enabled,      # WP5a（api 层自 AGENT_*_ENABLED 注入）
+        reflect_enabled=job.reflect_enabled,
     )
     if job.is_guest:
         guest_history.append(conv_id, job.message, result.answer)

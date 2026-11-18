@@ -48,6 +48,15 @@ def test_online_eval_defaults(settings_factory):
     assert s.ONLINE_EVAL_SAMPLE_RATE == 0.0
 
 
+def test_agent_behavior_switch_defaults():
+    """WP5a Agent 行为开关（docs/01 §5）：默认开；可经 .env/环境变量关闭。"""
+    s = Settings(_env_file=None)
+    assert s.AGENT_PLAN_ENABLED is True
+    assert s.AGENT_REFLECT_ENABLED is True
+    s2 = Settings(_env_file=None, AGENT_PLAN_ENABLED=False, AGENT_REFLECT_ENABLED=False)
+    assert (s2.AGENT_PLAN_ENABLED, s2.AGENT_REFLECT_ENABLED) == (False, False)
+
+
 def test_capability_configured_ready(settings_factory):
     s = settings_factory(
         VISION_BASE_URL="https://v.example.com/v1",

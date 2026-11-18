@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     API_CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
     ONLINE_EVAL_ENABLED: bool = False
     ONLINE_EVAL_SAMPLE_RATE: float = 0.0  # 默认 0：行为指标全量免费，点踩 100% 必评
+
+    # ── Agent 行为开关（WP5a；能力型默认开；关闭=行为与旧版逐字一致、零额外模型调用）──
+    AGENT_PLAN_ENABLED: bool = True  # Plan-and-Solve：复合问题取数前一次规划调用（agent/plan.py）
+    AGENT_REFLECT_ENABLED: bool = True  # Reflection：工具取数后证据自检，不足补查至多 1 轮（agent/reflect.py）
     SUBJECT_BATCH_API_KEY: str = ""  # 数据加工批量通道（subject-batch / graph --normalize）；缺失=调用方诚实拒绝
     SUBJECT_BATCH_BASE_URL: str = "https://api.z.ai/api/paas/v4"  # 国际版 z.ai（无 Batch API，走同步并发）
     SUBJECT_BATCH_MODEL: str = "glm-4.7-flash"  # 免费档（GLM-4.7-Flash，定价页核实 Free）

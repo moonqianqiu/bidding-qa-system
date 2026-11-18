@@ -100,6 +100,8 @@ def chat_stream(payload: ChatStreamRequest, request: Request,
         provider=effective_provider,  # P1-27：游客一律 None=主槽位
         lang=payload.lang,
         thinking_model=settings.CHAT_THINKING_MODEL,
+        plan_enabled=settings.AGENT_PLAN_ENABLED,      # WP5a 开关（能力型，默认开）
+        reflect_enabled=settings.AGENT_REFLECT_ENABLED,
         is_guest=bool(identity and identity.role == ROLE_GUEST),
         user_id=(identity.user_id if identity else None),
         trace_id=trace_id,

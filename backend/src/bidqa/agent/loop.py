@@ -9,6 +9,11 @@ C5 澄清闸门：首轮 + 限定条件判据（agent/clarify.py）命中 → �
 C6 最终生成：常规路径取循环自然产出的文本（单 token 事件下发，省一次调用）；
 深度思考开启时用思考模型重新流式生成（thinking 与正文分流，正文空时思考兜底；
 契约要求 thinking* 先于 token*，故思考增量先缓冲后统一下发）。
+WP5a：Plan-and-Solve（复合问题取数前一次规划，计划入 system prompt；agent/plan.py）
++ Reflection 证据自检（工具取数后、最终作答前恰 1 次，不足且有剩余轮次注入
+补查提示；agent/reflect.py）。两者开关可控（run 的 plan_enabled/reflect_enabled，
+api 层自 AGENT_*_ENABLED 注入），关闭时行为与旧版逐字一致、零额外模型调用；
+失败一律降级（无计划/不补查），绝不阻塞回答。
 
 单进程约定（docs/01 §6）；事件回调 on_event(type, payload) 由 SSE 层转协议。
 """
@@ -24,6 +29,12 @@ from bidqa.agent import leaks
 from bidqa.agent.clarify import is_underqualified
 from bidqa.agent import skills as skills_mod
 from bidqa.agent.context import HIT_CAP_SECTION, build_system_prompt, mount_tools
+from bidqa.agent.plan import build_plan, should_plan
+from bidqa.agent.reflect import (
+    REFLECT_HINT_SECTION,
+    reflect_on_evidence,
+    summarize_observations,
+)
 from bidqa.obs.tracing import set_attr, span
 
 # 模型返回空正文且补发仍空时的诚实兜底（不是答案，只是告诉用户发生了什么）
@@ -60,6 +71,8 @@ class LoopResult:
     charts: list[dict] = field(default_factory=list)
     degraded: list[str] = field(default_factory=list)
     phase_times: dict[str, int] = field(default_factory=dict)
+    plan_steps: list[str] = field(default_factory=list)  # WP5a 计划（未规划/失败=[]）
+    reflected: bool = False  # WP5a 反思触发补查是否发生（不含「判定证据足够」的未注入自检）
     conversation_id: str = ""  # 落库归属（worker 持久化后回填；""=未落库）
 
 
@@ -76,7 +89,8 @@ class AgentLoop:
             summary_text: str | None = None, web_enabled: bool = False,
             thinking: bool = False, thinking_model: str = "",
             first_round: bool = True, on_event: EventFn | None = None,
-            lang: str = "zh") -> LoopResult:
+            lang: str = "zh", plan_enabled: bool = False,
+            reflect_enabled: bool = False) -> LoopResult:
         events: EventFn = on_event or (lambda _t, _p: None)
         t0 = time.perf_counter()
         result = LoopResult(answer="")
@@ -86,12 +100,18 @@ class AgentLoop:
         underq = first_round and is_underqualified(question)
         skill_text = skills_mod.skill_text_for(  # C9 零往返（一层点名/二层指代回看）
             question, skills_mod.get_skills(), history=history)
+        # WP5a Plan-and-Solve：复合问题取数前一次规划（主模型槽位）。
+        # 开关关/简单问题/澄清判据命中=零调用；规划失败=[] 降级为无计划，绝不阻塞回答。
+        plan_steps: list[str] = []
+        if plan_enabled and not underq and should_plan(question, history_turns=len(history or [])):
+            plan_steps = build_plan(chat=self.chat, question=question)
+            result.plan_steps = plan_steps
         messages: list[dict] = [{
             "role": "system",
             "content": build_system_prompt(
                 tool_table=mounted.prompt_table(), first_round=first_round,
                 qualified=not underq, summary_text=summary_text, lang=lang,
-                skill_text=skill_text),
+                skill_text=skill_text, plan_steps=plan_steps),
         }, *(history or []), {"role": "user", "content": question}]
 
         # ── C5 澄清闸门：首轮 + 无限定条件数字题 → 仅追问（不检索不生成）──
@@ -99,6 +119,7 @@ class AgentLoop:
             return self._clarify_path(messages, mounted, result, events, t0, lang=lang)
 
         rounds = 0
+        reflected = False  # WP5a：本轮（一次问答）最多 1 次反思触发
         while rounds < MAX_ROUNDS:
             rounds += 1
             with span("agent.round", round=rounds):  # WP3：每轮一个 span（子树见 runner/rag 各自埋点）
@@ -176,6 +197,19 @@ class AgentLoop:
                 messages.append(msg)  # 带 tool_calls 的 assistant 原样回填
                 for out, (call_id, _n, _a) in zip(outcomes, calls):
                     messages.append(out.as_tool_message(tool_call_id=call_id))
+
+                # WP5a Reflection（证据自检）：工具取数后、最终作答前恰 1 次；
+                # 不足且未触顶 → 注入补查提示继续循环（不做答案后重写）。
+                # 开关关/无工具轮/已反思/触顶=零调用；自检失败=不补查，绝不阻塞。
+                if reflect_enabled and not reflected and rounds < MAX_ROUNDS:
+                    need_more, hint = reflect_on_evidence(
+                        chat=self.chat, question=question,
+                        observations_summary=summarize_observations(outcomes))
+                    if need_more and hint:
+                        reflected = True
+                        result.reflected = True
+                        messages.append({"role": "system", "content":
+                                         REFLECT_HINT_SECTION.format(hint=hint)})
 
         # ── 触顶强制收口（C3：基于已有结果直接作答；真流式，thinking 下抑制直播）──
         result.hit_cap = True
