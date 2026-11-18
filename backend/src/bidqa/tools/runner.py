@@ -17,8 +17,10 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any
 
+from opentelemetry import context as otel_context
 from pydantic import ValidationError
 
+from bidqa.obs.tracing import set_attr, span
 from bidqa.tools.base import ToolRegistry
 
 BATCH_TIMEOUT = 30.0  # 整批共享墙钟（docs/02 C3）
@@ -129,13 +131,17 @@ class ToolRunner:
     def run_batch(self, calls: list[ToolCall], registry: ToolRegistry) -> list[ToolOutcome]:
         """并行执行一批调用；registry=本会话挂载子集（P0-1/P1-9：未挂载工具
         一律 unknown_tool，联网开关/首轮约束不可被幻觉点名绕过）。
-        返回顺序与 calls 一致；任何路径都不抛异常。"""
+        返回顺序与 calls 一致；任何路径都不抛异常。
+        WP3：工具 span 在 runner 层统一埋（一处收口，调度层/工具本体不重复埋）；
+        提交时捕获当前 OTel 上下文，worker 线程 attach 后开 span——
+        父 span（agent.round）与执行线程解耦仍成树。未配置导出时全为 no-op。"""
         if not calls:
             return []
 
+        parent_ctx = otel_context.get_current()
         futures: dict[Future, ToolCall] = {}
         for call in calls:
-            futures[self._pool.submit(self._execute, call, registry)] = call
+            futures[self._pool.submit(self._execute_traced, call, registry, parent_ctx)] = call
 
         # 墙钟轮询（不能用 wait() 坐等：CPython 3.14 实测 cancel() 不唤醒 wait——
         # 停机 close() 取消排队 future 后 wait 会坐满超时；done() 轮询对
@@ -160,6 +166,24 @@ class ToolRunner:
                 results.append(ToolOutcome(call=call, payload={"error": "timeout", "tool": call.name},
                                            ok=False, elapsed_ms=-1))
         return results
+
+    # ── 单工具执行（隔离：所有异常在这里消化；WP3：tool.<name> span 父=提交时上下文）──
+    def _execute_traced(self, call: ToolCall, registry: ToolRegistry, parent_ctx: Any
+                        ) -> tuple[ToolCall, dict[str, Any], bool, int]:
+        token = otel_context.attach(parent_ctx)
+        try:
+            with span(f"tool.{call.name}",
+                      arguments_len=len(json.dumps(call.arguments, ensure_ascii=False,
+                                                   default=str))) as tool_span:
+                result = self._execute(call, registry)
+                _, payload, ok, ms = result
+                set_attr(tool_span, "outcome", "ok" if ok else "error")
+                set_attr(tool_span, "elapsed_ms", ms)
+                if not ok and payload.get("error"):
+                    set_attr(tool_span, "error", str(payload["error"]))  # 结构性错误串（脱敏面同日志）
+                return result
+        finally:
+            otel_context.detach(token)
 
     # ── 单工具执行（隔离：所有异常在这里消化）──
     def _execute(self, call: ToolCall, registry: ToolRegistry

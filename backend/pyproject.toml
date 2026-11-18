@@ -17,6 +17,9 @@ dependencies = [
     "neo4j>=5.25",
     "psycopg[binary]>=3.2",
     "pdfplumber>=0.11",
+    "opentelemetry-api>=1.34",
+    "opentelemetry-sdk>=1.34",
+    "opentelemetry-exporter-otlp-proto-http>=1.34",
 ]
 
 [project.scripts]

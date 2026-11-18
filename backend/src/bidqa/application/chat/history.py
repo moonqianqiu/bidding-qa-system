@@ -14,6 +14,7 @@ import uuid
 from typing import Any, Callable
 
 from bidqa.agent.loop import LoopResult
+from bidqa.obs.tracing import set_attr, span
 
 logger = logging.getLogger("bidqa.application.chat.history")
 
@@ -71,23 +72,28 @@ def persist_result(store: Any, conversation_id: str | None, question: str,
     刷新后前端可回放来源/工具/图表；None 保持 v1 二元形态（旧调用方兼容）。"""
     if not store:
         return conversation_id or ""
-    conv_id = conversation_id or str(uuid.uuid4())
-    try:
-        row = store.get_conversation(conv_id)
-        items = (row.get("messages") or {}).get("items", []) if row else []
-        title = title_of(row, question)
-        items = append_exchange(items, question, result.answer)[-200:]
-        if done is not None and items and items[-1].get("role") == "assistant":
-            items[-1] = {**items[-1], "done": done, "ts": int(time.time() * 1000)}
-        store.upsert_conversation(
-            conv_id, title,
-            {"schema_v": CONV_SCHEMA_V, "items": items,
-             "summary": prior_summary}, provider, user_id=user_id)
-        result.conversation_id = conv_id
-    except Exception as exc:
-        # 落库失败不再纯静默：类型+简述进日志（脱敏原则：只记结构性错误信息）
-        logger.warning("会话落库失败 conv=%s: %s: %s",
-                       conv_id[:8], type(exc).__name__, str(exc)[:160])
+    # WP3：persist span（items 数/has_conversation/schema_v 白名单元数据；问答原文不入）
+    with span("persist", has_conversation=bool(conversation_id),
+              schema_v=CONV_SCHEMA_V) as persist_span:
+        conv_id = conversation_id or str(uuid.uuid4())
+        items: list[dict] = []
+        try:
+            row = store.get_conversation(conv_id)
+            items = (row.get("messages") or {}).get("items", []) if row else []
+            title = title_of(row, question)
+            items = append_exchange(items, question, result.answer)[-200:]
+            if done is not None and items and items[-1].get("role") == "assistant":
+                items[-1] = {**items[-1], "done": done, "ts": int(time.time() * 1000)}
+            store.upsert_conversation(
+                conv_id, title,
+                {"schema_v": CONV_SCHEMA_V, "items": items,
+                 "summary": prior_summary}, provider, user_id=user_id)
+            result.conversation_id = conv_id
+        except Exception as exc:
+            # 落库失败不再纯静默：类型+简述进日志（脱敏原则：只记结构性错误信息）
+            logger.warning("会话落库失败 conv=%s: %s: %s",
+                           conv_id[:8], type(exc).__name__, str(exc)[:160])
+        set_attr(persist_span, "items", len(items))  # 落库 items 数（含本次问答对，上限 200）
     return conv_id
 
 

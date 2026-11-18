@@ -20,6 +20,7 @@ from qdrant_client import models
 
 from bidqa.clients.siliconflow import DataSourceError, EmbeddingClient, RerankClient
 from bidqa.database.qdrant import QdrantRepo
+from bidqa.obs.tracing import set_attr, span
 from bidqa.rag.bm25 import sparse_bm25
 from bidqa.rag.classify import classify
 
@@ -102,9 +103,23 @@ class Retriever:
         self._cache = _FIFO()
 
     def retrieve(self, question: str, top_k: int = FINAL_TOP_K) -> RetrievalResult:
+        """WP3：rag.retrieve span——只放 top_k/hits/mode/degraded/_cached 白名单元数据，
+        问题原文不入 span；真检索体在 _retrieve_uncached（原缩进，pyrefly baseline 列位不漂移）。"""
+        with span("rag.retrieve", top_k=top_k) as rag_span:
+            key = (question, top_k)
+            if (cached := self._cache.get(key)) is not None:
+                set_attr(rag_span, "cached", True)
+                return cached  # cached.elapsed_ms 是首次检索耗时，非本次（见类 docstring）
+            set_attr(rag_span, "cached", False)
+            result = self._retrieve_uncached(question, top_k)
+            set_attr(rag_span, "mode", result.mode)
+            set_attr(rag_span, "hits", len(result.hits))
+            set_attr(rag_span, "degraded", len(result.degraded))
+            return result
+
+    def _retrieve_uncached(self, question: str, top_k: int) -> RetrievalResult:
+        """缓存未命中的一次真检索（WP3 前为 retrieve 原体，逐行原样搬移）。"""
         key = (question, top_k)
-        if (cached := self._cache.get(key)) is not None:
-            return cached  # cached.elapsed_ms 是首次检索耗时，非本次（见类 docstring）
         t0 = time.perf_counter()
         degraded: list[str] = []
         kind, rrf_k = classify(question)

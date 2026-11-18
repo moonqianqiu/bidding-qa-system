@@ -23,6 +23,7 @@ from bidqa.application.image.refs import image_context_block
 from bidqa.clients.chat_factory import build_chat_for
 from bidqa.clients.siliconflow import DataSourceError
 from bidqa.database.factory import build_bp_repo, build_conversation_store, build_neo
+from bidqa.obs.tracing import span
 from bidqa.rag.factory import build_retriever, build_reranker
 from bidqa.tools.runner import ToolRunner
 from bidqa.clients.web_factory import build_web_clients
@@ -78,8 +79,19 @@ def shared_runner() -> ToolRunner:
 
 
 def run_chat_job(job: ChatJob, emit: EventFn) -> JobOutcome:
-    """编排入口：主路径 → 失败降级直答 → 再败抛 ChatJobError（绝不挂死）。"""
+    """编排入口（绝不挂死）：span 树根（WP3）chat.turn 覆盖主路径与降级路径全程；
+    属性按隐私白名单只放元数据（obs/tracing.py docstring），问题原文不入 span。"""
     t0 = time.perf_counter()  # 降级落库耗时口径起点（含主路径失败前的尝试时长，诚实全程）
+    with span("chat.turn", provider=job.provider or "", is_guest=job.is_guest,
+              question_len=len(job.message), lang=job.lang,
+              web_enabled=job.web_enabled,
+              has_conversation=bool(job.conversation_id)):
+        return _run_chat_turn(job, emit, t0)
+
+
+def _run_chat_turn(job: ChatJob, emit: EventFn, t0: float) -> JobOutcome:
+    """主路径 → 失败降级直答 → 再败抛 ChatJobError（WP3 拆出：span 包裹层不改变
+    原语句缩进，pyrefly baseline 列位不漂移）。"""
     try:
         return _run_main(job, emit)
     except Exception as exc:

@@ -18,23 +18,33 @@ from bidqa.config import Settings, get_settings
 APP_VERSION = "0.1.0"
 
 
-@asynccontextmanager
-async def _lifespan(app: FastAPI):
-    """优雅停机（docs/01 §6 四步；审计 P1-8）：①停收新请求=uvicorn 职责（收到
-    停机信号先关监听再进本钩子）；②活动 SSE 广播 error 5031；③cancel futures
-    （工具池/压缩池排空排队任务，运行中的交给守护线程语义）；④关连接池。"""
-    yield
-    from bidqa.api.chat.sse import broadcast_shutdown
-    from bidqa.application.chat.worker import shared_runner
+def _lifespan(settings: Settings):
+    """应用生命周期（docs/01 §6）：启动装 OTel span 导出（未配置=no-op）；
+    停机四步（审计 P1-8）：①停收新请求=uvicorn 职责（收到停机信号先关监听再进本
+    钩子）；②活动 SSE 广播 error 5031；③cancel futures（工具池/压缩池排空排队
+    任务，运行中的交给守护线程语义）；④关连接池 + tracing 收尾。"""
+    @asynccontextmanager
+    async def life(app: FastAPI):
+        from bidqa.obs.tracing import setup_tracing
 
-    broadcast_shutdown()  # ②
-    shared_runner().close()  # ③（工具池 cancel futures）
-    from bidqa.agent import compress
+        setup_tracing(settings)  # OTLP 端点未配置时返回 None（零开销 no-op）
+        yield
+        from bidqa.api.chat.sse import broadcast_shutdown
+        from bidqa.application.chat.worker import shared_runner
 
-    compress.close()  # ③（压缩池）
-    from bidqa.database.factory import close_pools
+        broadcast_shutdown()  # ②
+        shared_runner().close()  # ③（工具池 cancel futures）
+        from bidqa.agent import compress
 
-    close_pools()  # ④（PG/Neo4j 长连接）
+        compress.close()  # ③（压缩池）
+        from bidqa.database.factory import close_pools
+
+        close_pools()  # ④（PG/Neo4j 长连接）
+        from bidqa.obs.tracing import shutdown_tracing
+
+        shutdown_tracing()  # ④（span 导出 flush+停机，与连接池同段收尾）
+
+    return life
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -45,7 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # health 能力降级用例需要构造「核心缺失」的应用形态。
         settings = get_settings()
         settings.validate_core()
-    app = FastAPI(title="bidqa", version=APP_VERSION, lifespan=_lifespan)
+    app = FastAPI(title="bidqa", version=APP_VERSION, lifespan=_lifespan(settings))
     # 端点统一经 Depends(get_settings) 取配置；应用工厂注入时覆盖之，
     # 保证 create_app(自定义Settings) 的实例在所有端点生效（可测试性）。
     app.dependency_overrides[get_settings] = lambda: settings

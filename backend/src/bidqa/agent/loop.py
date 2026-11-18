@@ -24,6 +24,7 @@ from bidqa.agent import leaks
 from bidqa.agent.clarify import is_underqualified
 from bidqa.agent import skills as skills_mod
 from bidqa.agent.context import HIT_CAP_SECTION, build_system_prompt, mount_tools
+from bidqa.obs.tracing import set_attr, span
 
 # 模型返回空正文且补发仍空时的诚实兜底（不是答案，只是告诉用户发生了什么）
 EMPTY_ANSWER_TEXT = "本次没有拿到模型回答（上游返回空内容），请重试一次或换个问法。"
@@ -100,76 +101,81 @@ class AgentLoop:
         rounds = 0
         while rounds < MAX_ROUNDS:
             rounds += 1
-            if rounds >= MAX_ROUNDS - 1 and rounds > 1:
-                # 触顶预警（hit_cap 治理）：倒数第二轮起提示模型收口
-                messages.append({"role": "system", "content":
-                    f"已进行 {rounds - 1} 轮取数，最多还剩 {MAX_ROUNDS - rounds} 轮。"
-                    "除非缺少关键维度数据，否则请基于已有结果直接作答。"})
-            events("status", {"stage": "分析中"})
-            # 真流式轮次（C6）：content 增量实时下发（thinking 模式下草稿会被重写，抑制直播）；
-            # 若流末出现 tool_calls，说明已流的是伴随文本 → reset 清空（前端契约已支持）。
-            live = not (thinking and thinking_model)
-            content_parts: list[str] = []
-            tc_acc: dict[int, dict] = {}
-            for kind, payload in self.chat.chat_stream_round(
-                    messages, mounted.openai_schemas(), temperature=self.temperature):
-                if kind == "content":
-                    content_parts.append(payload)
-                    if live:
-                        events("token", {"text": payload})
-                else:  # ("tool", (index, id, name, args片段))
-                    index, tc_id, name, frag = payload
-                    entry = tc_acc.setdefault(index, {"id": tc_id or "", "name": name or "",
-                                                      "arguments": ""})
-                    if tc_id:
-                        entry["id"] = tc_id
-                    if name:
-                        entry["name"] = name
-                    if frag:
-                        entry["arguments"] += frag
-            if tc_acc:
-                if live and any(content_parts):  # 伴随文本不是最终回答 → 清空已流正文
-                    events("reset", {"reason": "tool_round_preamble"})
-                calls = []
-                for _, v in sorted(tc_acc.items()):
-                    try:
-                        args = json.loads(v["arguments"]) if v["arguments"] else {}
-                    except json.JSONDecodeError:
-                        args = {"_raw": v["arguments"]}
-                    calls.append((v["id"], v["name"], args))
-                msg = {"role": "assistant",
-                       "content": "".join(content_parts) or None,
-                       "tool_calls": [{"id": cid, "type": "function",
-                                       "function": {"name": n,
-                                                    # OpenAI 协议：arguments 必须是 JSON 字符串
-                                                    # （回传对象会被 SenseNova 400 invalid arguments）
-                                                    "arguments": json.dumps(a, ensure_ascii=False)}}
-                                      for cid, n, a in calls]}
-            else:
-                text = "".join(content_parts)
-                return self._finalize(text, messages, names, result, rounds, events,
-                                      t0, mounted=mounted,
-                                      thinking=thinking, thinking_model=thinking_model,
-                                      already_streamed=live, lang=lang)
+            with span("agent.round", round=rounds):  # WP3：每轮一个 span（子树见 runner/rag 各自埋点）
+                if rounds >= MAX_ROUNDS - 1 and rounds > 1:
+                    # 触顶预警（hit_cap 治理）：倒数第二轮起提示模型收口
+                    messages.append({"role": "system", "content":
+                        f"已进行 {rounds - 1} 轮取数，最多还剩 {MAX_ROUNDS - rounds} 轮。"
+                        "除非缺少关键维度数据，否则请基于已有结果直接作答。"})
+                events("status", {"stage": "分析中"})
+                # 真流式轮次（C6）：content 增量实时下发（thinking 模式下草稿会被重写，抑制直播）；
+                # 若流末出现 tool_calls，说明已流的是伴随文本 → reset 清空（前端契约已支持）。
+                live = not (thinking and thinking_model)
+                content_parts: list[str] = []
+                tc_acc: dict[int, dict] = {}
+                # WP3：LLM 调用 span（model/round 白名单元数据；outcome 流末回填）
+                with span("llm.chat_stream", model=getattr(self.chat, "model", ""),
+                          round=rounds) as llm_span:
+                    for kind, payload in self.chat.chat_stream_round(
+                            messages, mounted.openai_schemas(), temperature=self.temperature):
+                        if kind == "content":
+                            content_parts.append(payload)
+                            if live:
+                                events("token", {"text": payload})
+                        else:  # ("tool", (index, id, name, args片段))
+                            index, tc_id, name, frag = payload
+                            entry = tc_acc.setdefault(index, {"id": tc_id or "", "name": name or "",
+                                                              "arguments": ""})
+                            if tc_id:
+                                entry["id"] = tc_id
+                            if name:
+                                entry["name"] = name
+                            if frag:
+                                entry["arguments"] += frag
+                    set_attr(llm_span, "outcome", "tool_calls" if tc_acc else "text")
+                if tc_acc:
+                    if live and any(content_parts):  # 伴随文本不是最终回答 → 清空已流正文
+                        events("reset", {"reason": "tool_round_preamble"})
+                    calls = []
+                    for _, v in sorted(tc_acc.items()):
+                        try:
+                            args = json.loads(v["arguments"]) if v["arguments"] else {}
+                        except json.JSONDecodeError:
+                            args = {"_raw": v["arguments"]}
+                        calls.append((v["id"], v["name"], args))
+                    msg = {"role": "assistant",
+                           "content": "".join(content_parts) or None,
+                           "tool_calls": [{"id": cid, "type": "function",
+                                           "function": {"name": n,
+                                                        # OpenAI 协议：arguments 必须是 JSON 字符串
+                                                        # （回传对象会被 SenseNova 400 invalid arguments）
+                                                        "arguments": json.dumps(a, ensure_ascii=False)}}
+                                          for cid, n, a in calls]}
+                else:
+                    text = "".join(content_parts)
+                    return self._finalize(text, messages, names, result, rounds, events,
+                                          t0, mounted=mounted,
+                                          thinking=thinking, thinking_model=thinking_model,
+                                          already_streamed=live, lang=lang)
 
-            result.tool_called = True
-            if not result.first_tool:
-                result.first_tool = calls[0][1]
-            result.tool_trace.append([{"name": n, "arguments": a} for _, n, a in calls])
+                result.tool_called = True
+                if not result.first_tool:
+                    result.first_tool = calls[0][1]
+                result.tool_trace.append([{"name": n, "arguments": a} for _, n, a in calls])
 
-            events("status", {"stage": "取数中"})
-            batch = [ToolCall(name=n, arguments=a) for _, n, a in calls]
-            outcomes = self.runner.run_batch(batch, mounted)  # 挂载子集（P0-1/P1-9）
-            self._collect(outcomes, result)
+                events("status", {"stage": "取数中"})
+                batch = [ToolCall(name=n, arguments=a) for _, n, a in calls]
+                outcomes = self.runner.run_batch(batch, mounted)  # 挂载子集（P0-1/P1-9）
+                self._collect(outcomes, result)
 
-            for out in outcomes:  # D6 中途触发（工具表内被模型点名）→ 同样走澄清收口
-                if out.payload.get("clarify"):
-                    return self._clarify_done(str(out.payload.get("text", "")),
-                                              result, rounds, events, t0)
+                for out in outcomes:  # D6 中途触发（工具表内被模型点名）→ 同样走澄清收口
+                    if out.payload.get("clarify"):
+                        return self._clarify_done(str(out.payload.get("text", "")),
+                                                  result, rounds, events, t0)
 
-            messages.append(msg)  # 带 tool_calls 的 assistant 原样回填
-            for out, (call_id, _n, _a) in zip(outcomes, calls):
-                messages.append(out.as_tool_message(tool_call_id=call_id))
+                messages.append(msg)  # 带 tool_calls 的 assistant 原样回填
+                for out, (call_id, _n, _a) in zip(outcomes, calls):
+                    messages.append(out.as_tool_message(tool_call_id=call_id))
 
         # ── 触顶强制收口（C3：基于已有结果直接作答；真流式，thinking 下抑制直播）──
         result.hit_cap = True

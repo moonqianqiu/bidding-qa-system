@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     SUBJECT_BATCH_BASE_URL: str = "https://api.z.ai/api/paas/v4"  # 国际版 z.ai（无 Batch API，走同步并发）
     SUBJECT_BATCH_MODEL: str = "glm-4.7-flash"  # 免费档（GLM-4.7-Flash，定价页核实 Free）
 
+    # ── 可观测性（能力型；缺失 = OTel span 导出关闭，全局 provider 保持 no-op）──
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = ""  # OTLP/HTTP 端点（如 http://127.0.0.1:4318）；留空=关闭
+    OTEL_SERVICE_NAME: str = "bidqa"  # resource service.name（仅 OTLP 已配置时生效）
+
     # ── 用户体系（三角色 admin/user/guest；docs/01 §3.1 用户体系段）──
     USERS_ENABLED: bool = True  # false=退回单机 API_AUTH_TOKEN 模式（旧测试/脚本兼容开关）
     ADMIN_USERNAME: str = "admin"  # 首次启动 users 空表时的种子管理员
