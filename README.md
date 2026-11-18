@@ -29,7 +29,7 @@
 ## 2. 架构与技术栈
 
 ```
-frontend/  Next.js 16 + React 19 + Tailwind 4      app 薄壳 + features/chat · features/console · lib
+frontend/  Vite + React 19 + Tailwind 4            app 薄壳（react-router 五路由）+ features/chat · features/console · lib
 backend/   FastAPI（Python 3.14 + uv，src/bidqa）   api · application · agent · tools · rag · clients · database · auth · ingest · eval · obs · cli
 services/  绿色安装数据服务                          Qdrant / PostgreSQL / Neo4j 官方 zip，数据在 data/db/
 deploy/    启停编排脚本                              start / stop / status / e2e / 服务安装
@@ -83,7 +83,7 @@ cd frontend && npm run dev                                            # http://1
 
 ```bash
 cd backend && uv run pytest -q        # 全量全绿（服务离线时集成例 skip 属预期；当前 579 例）
-cd frontend && npx tsc --noEmit
+cd frontend && npm run typecheck      # 前端类型检查（Vite 版，CI 同款 npx tsc --noEmit）
 bash deploy/e2e-chat.sh               # SSE 三走向（机器断言版；真实调用主模型）
 cd backend && uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent
 ```

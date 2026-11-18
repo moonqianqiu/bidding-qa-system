@@ -4,10 +4,10 @@
 import { clearAuth, getToken } from "./auth";
 import type { SSEEvent } from "./types";
 
-// SSE 直连后端端口（docs/01 §1：生产经 /api/* 代理，SSE 直连——Next dev 的
-// rewrites 会把整个 SSE 缓冲到响应结束，实测事件全部压到最后 1ms 批量到达）。
-// 覆盖手段：构建时设 NEXT_PUBLIC_API_BASE=""（走同源代理）或指向其它后端地址。
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
+// SSE 直连后端端口（docs/01 §1：生产经 /api/* 代理，SSE 直连——dev 代理
+// 会把整个 SSE 缓冲到响应结束，实测事件全部压到最后 1ms 批量到达）。
+// 覆盖手段：构建时设 VITE_API_BASE=""（走同源代理）或指向其它后端地址。
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 
 // 用户体系：SSE 与 REST 同一凭证（Authorization 头贯通）；401/403+4031 清态跳登录。
 function authHeaders(): Record<string, string> {
