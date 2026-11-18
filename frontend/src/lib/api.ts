@@ -167,7 +167,12 @@ export type ConsoleStats = {
     | { status: "不可用" };
   qdrant: { vectors: number; collection: string } | { status: "不可用" };
   neo4j:
-    | { labels: Record<string, number>; total: number }
+    | {
+        labels: Record<string, number>;
+        total: number;
+        relationships: Record<string, number>;
+        relationship_total: number;
+      }
     | { status: "不可用" };
 };
 

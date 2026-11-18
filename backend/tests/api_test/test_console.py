@@ -160,6 +160,10 @@ class FakeNeo:
         return {"Project": 8489, "SubjectMatter": 2188, "Supplier": 4001,
                 "Purchaser": 3504, "Agency": 306, "Location": 40}
 
+    def relationship_counts(self) -> dict[str, int]:
+        return {"FOR": 8489, "PROCURED": 8489, "WON": 8489, "IN": 8489,
+                "AGENTED": 844}
+
 
 def patch_admin(monkeypatch, store: FakeUsersStore, pg: FakePg | None = None) -> None:
     """builder 缝随 C4 拆分分发到各消费模块（FakePg 本就是 store 形状）。"""
@@ -212,6 +216,34 @@ def test_console_aggregate_shape(settings_factory, monkeypatch):
     assert data["neo4j"]["total"] == 18528  # 8489+2188+4001+3504+306+40
     assert set(data["neo4j"]["labels"]) == {"Project", "SubjectMatter", "Supplier",
                                             "Purchaser", "Agency", "Location"}
+    # 图谱关系可见化（docs/01 §3.1）：边类型计数 + 合计，与节点计数对称
+    assert data["neo4j"]["relationships"] == {"FOR": 8489, "PROCURED": 8489,
+                                              "WON": 8489, "IN": 8489,
+                                              "AGENTED": 844}
+    assert data["neo4j"]["relationship_total"] == 34800  # 8489*4+844
+
+
+def test_collect_neo_counts_shape_and_totals(monkeypatch):
+    """契约（docs/01 §3.1）：collect_neo_counts 返回 labels+total+relationships+
+    relationship_total 四键，合计为各分项之和。"""
+    monkeypatch.setattr(admin_mod, "build_neo", lambda: FakeNeo())
+    out = admin_mod.collect_neo_counts()
+    assert set(out) == {"labels", "total", "relationships", "relationship_total"}
+    assert out["total"] == 18528
+    assert set(out["relationships"]) == {"FOR", "PROCURED", "WON", "IN", "AGENTED"}
+    assert out["relationship_total"] == sum(out["relationships"].values()) == 34800
+
+
+def test_collect_neo_counts_unavailable_on_failure(monkeypatch):
+    """neo 挂（None/异常）→ {"status": "不可用"}，绝不记 0（硬约束 1）。"""
+    monkeypatch.setattr(admin_mod, "build_neo", lambda: None)
+    assert admin_mod.collect_neo_counts() == {"status": "不可用"}
+
+    def boom():
+        raise RuntimeError("neo down")
+
+    monkeypatch.setattr(admin_mod, "build_neo", boom)
+    assert admin_mod.collect_neo_counts() == {"status": "不可用"}
 
 
 def test_console_aggregate_degraded_db_marks_unavailable(settings_factory, monkeypatch):

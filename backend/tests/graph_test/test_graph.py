@@ -312,6 +312,20 @@ def test_query_type_validation(neo: NeoClient) -> None:
         neo.query("subject_freq", top_n=0)
 
 
+def test_relationship_counts_shape(neo: NeoClient) -> None:
+    """relationship_counts：{类型: 数量}，与节点 counts 对称（控制台 KPI 数据面）。
+
+    先 MERGE 一条 IT-G 项目（幂等）——五类边（FOR/PROCURED/WON/AGENTED/IN）
+    至少各一条，计数全为正整数。
+    """
+    neo.upsert_project(ROWS[0])
+    rels = neo.relationship_counts()
+    assert isinstance(rels, dict)
+    for t in ("FOR", "PROCURED", "WON", "AGENTED", "IN"):
+        assert isinstance(rels.get(t), int) and rels[t] >= 1
+    assert sum(rels.values()) >= len(rels) > 0
+
+
 def test_d2_tool_end_to_end(neo: NeoClient) -> None:
     tool = SearchGraphTool(neo)
     out = tool.run(tool.args_model.model_validate(

@@ -23,8 +23,9 @@ _CONSOLE_TTL = 30.0
 @router.get("/api/system/console")
 def system_console(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """三库规模聚合：pg{bidding_procurement, conversations, feedback, users} +
-    qdrant{vectors, collection} + neo4j{labels 六类, total}。任一库挂 → 该节
-    {"status": "不可用"}，其余节照常（诚实降级，不整页报废）。"""
+    qdrant{vectors, collection} + neo4j{labels 六类, total, relationships 边类型计数,
+    relationship_total}。任一库挂 → 该节 {"status": "不可用"}，其余节照常
+    （诚实降级，不整页报废）。"""
     global _console_cache
     now = time.monotonic()
     if _console_cache and now - _console_cache[0] < _CONSOLE_TTL:

@@ -46,7 +46,10 @@ def collect_neo_counts() -> dict[str, Any]:
         if neo is None:
             raise RuntimeError("未配置或不可用")
         labels = neo.counts()
-        return {"labels": labels, "total": sum(int(v) for v in labels.values())}
+        relationships = neo.relationship_counts()
+        return {"labels": labels, "total": sum(int(v) for v in labels.values()),
+                "relationships": relationships,
+                "relationship_total": sum(int(v) for v in relationships.values())}
     except Exception:
         return dict(_UNAVAILABLE)
 

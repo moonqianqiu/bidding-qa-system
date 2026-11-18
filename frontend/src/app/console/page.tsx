@@ -30,7 +30,14 @@ export default function ConsolePage() {
   const neo = availNeo(stats?.neo4j);
   const svcOk = health?.status === "ok";
 
-  const kpi: { label: string; value: string; tone?: "ok" | "warn" }[] = [
+  // 边计数明细挂卡片 title（5 类，缺失时回退到值本身——旧后端无该字段不冒错）
+  const neoRelDetail = neo?.relationships
+    ? Object.entries(neo.relationships)
+        .map(([k, v]) => `${k} ${num(v)}`)
+        .join(" · ")
+    : undefined;
+
+  const kpi: { label: string; value: string; tone?: "ok" | "warn"; title?: string }[] = [
     {
       label: t.kpiStatus,
       value: health ? (svcOk ? t.healthOk.replace("● ", "") : "degraded") : t.na,
@@ -46,6 +53,15 @@ export default function ConsolePage() {
     { label: t.kpiPgRows, value: stats ? (pg ? num(pg.bidding_procurement) : t.na) : "…" },
     { label: t.kpiVectors, value: stats ? (qd ? num(qd.vectors) : t.na) : "…" },
     { label: t.kpiGraphNodes, value: stats ? (neo ? num(neo.total) : t.na) : "…" },
+    // 图谱关系：relationship_total 缺失/不可用 → t.na，绝不显示 0（硬约束 1）
+    {
+      label: t.kpiGraphRels,
+      value:
+        stats && neo?.relationship_total != null
+          ? num(neo.relationship_total)
+          : t.na,
+      title: neoRelDetail,
+    },
   ];
 
   const cardHead = "text-sm font-semibold text-fg";
@@ -85,8 +101,8 @@ export default function ConsolePage() {
       </div>
       {error && <p className="mt-2 text-xs text-red-600 dark:text-red-300">{error}</p>}
 
-      {/* KPI 行（7 卡） */}
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+      {/* KPI 行（8 卡） */}
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
         {kpi.map((c) => (
           <div key={c.label} className="rounded-xl border border-line bg-panel p-3">
             <p className="text-[10px] text-faint">{c.label}</p>
@@ -98,7 +114,7 @@ export default function ConsolePage() {
                     ? "text-amber-500 dark:text-amber-300"
                     : "text-fg"
               }`}
-              title={c.value}
+              title={c.title ?? c.value}
             >
               {c.value}
             </p>

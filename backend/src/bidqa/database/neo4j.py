@@ -176,3 +176,9 @@ class NeoClient:
         rows = self.execute(
             "MATCH (n) RETURN labels(n)[0] AS label, count(*) AS c")
         return {r["label"]: int(r["c"]) for r in rows}
+
+    def relationship_counts(self) -> dict[str, int]:
+        """关系（边）计数：{类型: 数量}（控制台 KPI 与节点计数对称，docs/01 §3.1）。"""
+        rows = self.execute(
+            "MATCH ()-[r]->() RETURN type(r) AS t, count(*) AS n")
+        return {r["t"]: int(r["n"]) for r in rows}
