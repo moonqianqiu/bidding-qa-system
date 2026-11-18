@@ -22,7 +22,7 @@ from bidqa.tools.graph_tool import SearchGraphTool
 from bidqa.tools.knowledge import SearchKnowledgeTool
 from bidqa.tools.web import SearchWebTool
 
-SCHEMA_V = 1
+SCHEMA_V = 2  # WP5b：done +plan_steps/reflected（docs/01 §3.4；加字段必须递增）
 
 
 def build_registry(retriever, chat, bp, neo, web_clients: dict, reranker) -> ToolRegistry:
@@ -113,12 +113,15 @@ def build_done(result: Any, *, elapsed_ms: int, trace_id: str,
     tool_name 如实区分两条澄清路径（审计 P0-2 契约收口）：经工具追问=
     ask_clarification，固定话术回退=""。
     主路径 phase_times 段名：rounds_ms/generate_ms/total_ms；降级直答：retrieve_ms/degrade_ms/total_ms。
+    WP5b（schema_v=2）：plan_steps/reflected 透传 LoopResult 轨迹（字段恒在位，空值不省略）；
+    澄清轮与 sources/charts 同口径置空（澄清没有可展示的取数计划/补查轨迹）。
     """
     sources = dedup_sources(list(getattr(result, "sources", []) or []))
     charts = dedup_charts(list(getattr(result, "charts", []) or []))
     clarify = bool(getattr(result, "clarify", False))
     phase_times = dict(getattr(result, "phase_times", {}) or {})
     phase_times["total_ms"] = elapsed_ms
+    plan_steps = list(getattr(result, "plan_steps", []) or [])
     return {
         "sources": [] if clarify else sources,
         "web_sources": [] if clarify else deepcopy(web_sources or []),
@@ -131,6 +134,8 @@ def build_done(result: Any, *, elapsed_ms: int, trace_id: str,
         "phase_times": phase_times,
         "degraded": list(getattr(result, "degraded", []) or []),
         "clarify": clarify,
+        "plan_steps": [] if clarify else deepcopy(plan_steps),
+        "reflected": False if clarify else bool(getattr(result, "reflected", False)),
         "conversation_id": (getattr(result, "conversation_id", "") or "") or None,
         "provider": provider,
         "trace_id": trace_id,

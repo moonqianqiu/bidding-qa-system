@@ -116,7 +116,8 @@ def test_tool_round_event_order_contract(client, monkeypatch) -> None:
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)  # 单调递增
     assert types.index("token") > types.index("status")          # status*→token*→done
     done = events[-1]
-    assert done["schema_v"] == 1
+    assert done["schema_v"] == 2  # WP5b：+plan_steps/reflected（docs/01 §3.4）
+    assert done["plan_steps"] == [] and done["reflected"] is False  # 恒在位，空不省略
     assert done["tool_called"] is True and done["tool_name"] == "search_knowledge"
     assert done["tool_calls"] == [[{"name": "search_knowledge",
                                     "arguments": {"query": "中标通知书"}}]]
@@ -124,6 +125,55 @@ def test_tool_round_event_order_contract(client, monkeypatch) -> None:
     assert done["sources"][0]["id"] == "chunk-9"
     assert done["phase_times"]["total_ms"] >= 0
     assert done["trace_id"]
+
+
+# ── WP5b：done 轨迹字段 plan_steps/reflected（schema_v=2，docs/01 §3.4）──
+def _flagged_client(settings_factory, **flags):
+    return TestClient(create_app(settings_factory(**flags)))
+
+
+def test_plan_stream_contract(settings_factory, monkeypatch):
+    """规划路径：规划调用前 status「规划中」；done.plan_steps 透传计划、reflected=false、
+    schema_v=2（reflect 关避免消费 plain_script，口径聚焦 plan）。"""
+    chat = FakeChat(
+        tools_script=[
+            tool_msg("search_knowledge", {"query": "空调中标金额"}),
+            text_msg("依据材料[1]：2023年X万元、2024年Y万元。"),
+        ],
+        plain_script=['{"steps": ["查2023年空调中标金额", "查2024年空调中标金额"]}'],
+    )
+    patch_service(monkeypatch, chat=chat)
+    client2 = _flagged_client(settings_factory, AGENT_REFLECT_ENABLED="false")
+    events = stream_events(client2, {"message": "分别对比2023年和2024年的空调中标金额"})
+    done = events[-1]
+    assert done["type"] == "done" and done["schema_v"] == 2
+    assert done["plan_steps"] == ["查2023年空调中标金额", "查2024年空调中标金额"]
+    assert done["reflected"] is False
+    stages = [e.get("stage") for e in events if e["type"] == "status"]
+    assert "规划中" in stages  # 仅实际发起规划调用前出现
+    assert "分析中" in stages and "取数中" in stages  # 规划后照常进入工具循环
+
+
+def test_reflect_stream_contract(settings_factory, monkeypatch):
+    """自检路径：自检调用前 status「自检中」；need_more=true → 补查轮 + done.reflected=true；
+    plan 关闭时 plan_steps=[]（恒在位）。"""
+    chat = FakeChat(
+        tools_script=[
+            tool_msg("search_knowledge", {"query": "中标通知书"}),
+            text_msg("补充2024年数据后作答。"),
+        ],
+        plain_script=['{"need_more": true, "hint": "缺2024年数据"}'],
+    )
+    patch_service(monkeypatch, chat=chat)
+    client2 = _flagged_client(settings_factory, AGENT_PLAN_ENABLED="false")
+    events = stream_events(client2, {"message": "中标通知书效力？"})
+    done = events[-1]
+    assert done["type"] == "done" and done["schema_v"] == 2
+    assert done["reflected"] is True  # 自检判定证据不足并触发补查
+    assert done["plan_steps"] == []   # 未规划：字段在位且为空
+    stages = [e.get("stage") for e in events if e["type"] == "status"]
+    assert "自检中" in stages         # 仅实际发起自检调用前出现
+    assert stages.index("自检中") < stages.index("分析中", stages.index("自检中"))  # 补查轮发生
 
 
 def test_clarify_stream_shape(client, monkeypatch) -> None:
@@ -539,6 +589,9 @@ def test_persist_attaches_done_for_restore(settings_factory, monkeypatch):
     assert stored["done"]["rounds"] == done["rounds"]
     assert isinstance(stored["done"]["elapsed_ms"], int)  # 真实测量值（假模型可亚毫秒=0，不做 >0 脆断言）
     assert stored["done"]["sources"] == done["sources"]  # 逐条来源口径一致（含聚合口径条目）
+    # WP5b：轨迹字段随 done 落库，刷新后回放执行计划/已补查
+    assert stored["done"]["schema_v"] == 2
+    assert stored["done"]["plan_steps"] == [] and stored["done"]["reflected"] is False
 
 
 def test_load_history_projects_binary_only():

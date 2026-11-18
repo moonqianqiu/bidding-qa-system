@@ -55,3 +55,34 @@ def test_build_done_fixed_fallback_clarify_tool_name_empty() -> None:
     result = LoopResult(answer="generic", clarify=True)
     done = build_done(result, elapsed_ms=5, trace_id="t2")
     assert done["tool_name"] == "" and done["tool_called"] is False
+
+
+def test_build_done_plan_reflect_fields_contract() -> None:
+    """WP5b（docs/01 §3.4 schema_v=2）：plan_steps/reflected 透传 LoopResult，
+    深拷贝隔离（done 修改不回写 result）。"""
+    result = LoopResult(answer="答", plan_steps=["查法规依据", "查中标金额"], reflected=True)
+    done = build_done(result, elapsed_ms=5, trace_id="t3")
+    assert done["schema_v"] == 2
+    assert done["plan_steps"] == ["查法规依据", "查中标金额"]
+    assert done["reflected"] is True
+    done["plan_steps"].append("脏数据")
+    assert result.plan_steps == ["查法规依据", "查中标金额"]  # 深拷贝隔离
+
+
+def test_build_done_empty_plan_fields_not_omitted() -> None:
+    """无计划/未反思：字段**在位**且为 []/False（空值不省略——前端按字段在位消费
+    schema_v>=2，缺键会把「没规划」误判成「旧结构」）。"""
+    done = build_done(LoopResult(answer="答"), elapsed_ms=1, trace_id="t4")
+    assert done["schema_v"] == 2
+    assert "plan_steps" in done and done["plan_steps"] == []
+    assert "reflected" in done and done["reflected"] is False
+
+
+def test_build_done_clarify_zeroes_plan_fields() -> None:
+    """澄清轮：plan_steps/reflected 恒空——与 sources/charts 同一置零口径
+    （澄清轮没有可展示的取数计划/补查轨迹）。"""
+    result = LoopResult(answer="请问需要哪个地区？", clarify=True,
+                        plan_steps=["查A"], reflected=True)
+    done = build_done(result, elapsed_ms=3, trace_id="t5")
+    assert done["clarify"] is True
+    assert done["plan_steps"] == [] and done["reflected"] is False

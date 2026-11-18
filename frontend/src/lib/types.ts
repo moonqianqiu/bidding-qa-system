@@ -24,6 +24,9 @@ export type SSEEvent = {
   phase_times?: Record<string, number>;
   degraded?: string[];
   clarify?: boolean;
+  // WP5b（schema_v=2）：Plan/Reflection 轨迹（空值不省略；澄清轮恒 []/false）
+  plan_steps?: string[];
+  reflected?: boolean;
   conversation_id?: string | null;
   provider?: string;
   trace_id?: string;

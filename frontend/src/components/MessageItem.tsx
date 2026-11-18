@@ -68,6 +68,11 @@ export default function MessageItem({
   const { t } = useI18n();
   const isUser = message.role === "user";
 
+  // WP5b（schema_v=2）：Plan/Reflection 轨迹——执行计划折叠列表 + 已补查徽标。
+  // plan_steps 恒在位（空=未规划）；Array.isArray 守卫旧快照/异常结构。
+  const done = message.done;
+  const planSteps = Array.isArray(done?.plan_steps) ? done!.plan_steps! : [];
+
   const copyAnswer = async () => {
     try {
       await navigator.clipboard.writeText(message.content);
@@ -89,7 +94,6 @@ export default function MessageItem({
     );
   }
 
-  const done = message.done;
   const streaming = !done && !message.error && !message.interrupted;
 
   return (
@@ -116,6 +120,20 @@ export default function MessageItem({
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-500 dark:bg-cyan-400" />
           {stageText(message.statusStage, t)}…
         </div>
+      )}
+
+      {planSteps.length > 0 && (
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-dim hover:text-fg [&::-webkit-details-marker]:hidden">
+            <span className="transition-transform group-open:rotate-90">▸</span>
+            {t.planTitle}
+          </summary>
+          <ol className="mt-1 list-decimal space-y-0.5 border-l-2 border-line/60 pl-5 text-xs leading-6 text-dim">
+            {planSteps.map((step, i) => (
+              <li key={i}>{step}</li>
+            ))}
+          </ol>
+        </details>
       )}
 
       {message.content && (
@@ -207,6 +225,11 @@ export default function MessageItem({
             </button>
           )}
           <span className="text-faint">{fmtTime(message.ts)}</span>
+          {done.reflected && (
+            <span className="rounded border border-line px-1.5 py-0.5 text-dim">
+              {t.reflectedBadge}
+            </span>
+          )}
           {done.elapsed_ms != null && (
             <span className="text-faint">{(done.elapsed_ms / 1000).toFixed(1)}s</span>
           )}

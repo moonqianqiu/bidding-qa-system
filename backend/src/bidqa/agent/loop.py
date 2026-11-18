@@ -102,8 +102,10 @@ class AgentLoop:
             question, skills_mod.get_skills(), history=history)
         # WP5a Plan-and-Solve：复合问题取数前一次规划（主模型槽位）。
         # 开关关/简单问题/澄清判据命中=零调用；规划失败=[] 降级为无计划，绝不阻塞回答。
+        # WP5b：仅实际发起规划调用前发「规划中」阶段（开关关/未命中=零事件，前端阶段条兼容旧名）。
         plan_steps: list[str] = []
         if plan_enabled and not underq and should_plan(question, history_turns=len(history or [])):
+            events("status", {"stage": "规划中"})
             plan_steps = build_plan(chat=self.chat, question=question)
             result.plan_steps = plan_steps
         messages: list[dict] = [{
@@ -205,6 +207,8 @@ class AgentLoop:
                 # 开关关/无工具轮/已自检/触顶=零调用；自检失败=不补查，绝不阻塞。
                 if reflect_enabled and not reflect_checked and rounds < MAX_ROUNDS:
                     reflect_checked = True
+                    # WP5b：仅实际发起自检调用前发「自检中」（下一轮「分析中」自然接续）
+                    events("status", {"stage": "自检中"})
                     need_more, hint = reflect_on_evidence(
                         chat=self.chat, question=question,
                         observations_summary=summarize_observations(outcomes))
