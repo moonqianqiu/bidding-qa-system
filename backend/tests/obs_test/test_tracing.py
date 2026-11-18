@@ -132,6 +132,25 @@ def test_span_error_status_and_reraise(settings_factory) -> None:
     assert record.events and record.events[0].name == "exception"
 
 
+# ── 契约 3 补充：异常内容不入 span（隐私白名单纵深）──
+def test_span_error_does_not_leak_exception_message(settings_factory) -> None:
+    """异常 message 可能夹带问题原文/密钥（上游报错回显等），span 只记类型名与
+    栈帧，绝不记录异常文本（record_exception 会把 str(exc) 写进事件 → 不用它）。"""
+    exporter = InMemorySpanExporter()
+    setup_tracing(settings_factory(OTEL_EXPORTER_OTLP_ENDPOINT="http://otel.test:4318"), exporter=exporter)
+    secret = "用户问题原文 sk-live-abcdef"
+    with pytest.raises(RuntimeError):
+        with span("chat.turn", question_len=3):
+            raise RuntimeError(f"上游失败：{secret}")
+    (record,) = exporter.get_finished_spans()
+    blob = json.dumps([(e.name, dict(e.attributes or {})) for e in record.events],
+                      ensure_ascii=False, default=str)
+    blob += str(record.status.description or "")
+    assert secret not in blob
+    assert "sk-live" not in blob
+    assert record.events and record.events[0].attributes.get("exception.type") == "RuntimeError"
+
+
 # ── 契约 1 补充：未配置时 span() 本身可用且零副作用 ──
 def test_span_without_provider_is_noop(monkeypatch) -> None:
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)

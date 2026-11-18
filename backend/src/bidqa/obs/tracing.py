@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import os
+import traceback
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -121,8 +122,8 @@ def shutdown_tracing() -> None:
 def span(name: str, **attrs: Any) -> Iterator[Any]:
     """span 上下文管理器（白名单纪律见模块 docstring）。
 
-    异常路径：record_exception + 状态 ERROR（描述=异常类型名，不带异常文本，免得
-    问题原文/密钥经异常 message 泄入 span）后原样上抛。未配置时全程 no-op。
+    异常路径：只记类型名 + 栈帧（format_tb 不含消息行），状态描述同样只用类型名；
+    问题原文/密钥经异常 message 泄入 span 的通道被切断。未配置时全程 no-op。
     """
     tracer = trace.get_tracer(TRACER_NAME)
     with tracer.start_as_current_span(name, record_exception=False,
@@ -134,7 +135,13 @@ def span(name: str, **attrs: Any) -> Iterator[Any]:
         try:
             yield recording
         except Exception as exc:
-            recording.record_exception(exc)
+            # 不用 record_exception：它会把 str(exc) 与含 message 的完整 traceback
+            # 写进事件——上游报错常回显问题原文/密钥。
+            recording.add_event("exception", {
+                "exception.type": type(exc).__name__,
+                "exception.stacktrace":
+                    "".join(traceback.format_tb(exc.__traceback__))[:4000],
+            })
             recording.set_status(Status(StatusCode.ERROR, type(exc).__name__))
             raise
 
