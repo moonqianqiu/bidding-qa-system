@@ -230,6 +230,22 @@ def test_no_need_no_extra_round() -> None:
     assert len(plain_calls(chat)) == 1                  # 自检调用发生，只是判定证据足够
 
 
+def test_reflect_no_need_checks_only_once_across_rounds() -> None:
+    """need_more=false 也不得每轮重复自检：一次问答恰 1 次（成本红线）。"""
+    chat = FakeChat(
+        tools_script=[
+            tool_msg("search_knowledge", {"query": "a"}, call_id="c1"),
+            tool_msg("search_knowledge", {"query": "b"}, call_id="c2"),
+            text_msg("依据[1][2]回答。"),
+        ],
+        plain_script=['{"need_more": false, "hint": ""}'],
+    )
+    loop = AgentLoop(chat, make_registry(), ToolRunner())
+    r = loop.run(Q, reflect_enabled=True)
+    assert r.reflected is False and r.rounds == 3
+    assert len(plain_calls(chat)) == 1                  # 两轮工具也只自检一次
+
+
 def test_reflect_disabled_zero_calls() -> None:
     """开关关闭：零额外调用，行为与现状逐字一致。"""
     chat = FakeChat(
@@ -253,18 +269,19 @@ def test_no_tools_no_reflect() -> None:
 
 
 def test_hit_cap_round_never_reflects() -> None:
-    """触顶轮（rounds=MAX_ROUNDS）不反思——hit_cap 无剩余轮次可补查。"""
+    """触顶轮（rounds=MAX_ROUNDS）不反思——hit_cap 无剩余轮次可补查；
+    且一次问答只自检一次（首轮工具后），不随轮次递增。"""
     script = [tool_msg("search_knowledge", {"query": f"q{i}"}, call_id=f"c{i}")
               for i in range(MAX_ROUNDS)]
     chat = FakeChat(
         tools_script=script,
-        plain_script=['{"need_more": false, "hint": ""}'] * (MAX_ROUNDS - 1)
-        + ["基于已有结果直接作答：材料见[1]。"],
+        plain_script=['{"need_more": false, "hint": ""}',
+                      "基于已有结果直接作答：材料见[1]。"],
     )
     loop = AgentLoop(chat, make_registry(), ToolRunner())
     r = loop.run(Q, reflect_enabled=True)
     assert r.hit_cap is True and r.rounds == MAX_ROUNDS
-    assert len(plain_calls(chat)) == MAX_ROUNDS - 1     # 第 4 轮（触顶）零反思
+    assert len(plain_calls(chat)) == 1                   # 恰 1 次自检（非每轮一次）
     assert chat.calls[-1]["kind"] == "stream"           # 收口走无工具流式生成
 
 

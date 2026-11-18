@@ -119,7 +119,8 @@ class AgentLoop:
             return self._clarify_path(messages, mounted, result, events, t0, lang=lang)
 
         rounds = 0
-        reflected = False  # WP5a：本轮（一次问答）最多 1 次反思触发
+        reflected = False  # WP5a：本轮（一次问答）最多 1 次「补查」触发
+        reflect_checked = False  # WP5a：自检本身也只做 1 次（need_more=false 不重复烧调用）
         while rounds < MAX_ROUNDS:
             rounds += 1
             with span("agent.round", round=rounds):  # WP3：每轮一个 span（子树见 runner/rag 各自埋点）
@@ -198,10 +199,12 @@ class AgentLoop:
                 for out, (call_id, _n, _a) in zip(outcomes, calls):
                     messages.append(out.as_tool_message(tool_call_id=call_id))
 
-                # WP5a Reflection（证据自检）：工具取数后、最终作答前恰 1 次；
+                # WP5a Reflection（证据自检）：工具取数后、最终作答前恰 1 次
+                # （need_more=false 也不重复自检——每轮一次会把成本放大三倍）；
                 # 不足且未触顶 → 注入补查提示继续循环（不做答案后重写）。
-                # 开关关/无工具轮/已反思/触顶=零调用；自检失败=不补查，绝不阻塞。
-                if reflect_enabled and not reflected and rounds < MAX_ROUNDS:
+                # 开关关/无工具轮/已自检/触顶=零调用；自检失败=不补查，绝不阻塞。
+                if reflect_enabled and not reflect_checked and rounds < MAX_ROUNDS:
+                    reflect_checked = True
                     need_more, hint = reflect_on_evidence(
                         chat=self.chat, question=question,
                         observations_summary=summarize_observations(outcomes))
