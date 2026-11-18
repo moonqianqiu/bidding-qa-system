@@ -1,8 +1,14 @@
-"""G3 Agent 评测运行器（fake 脚本注入；快照命名/原子写/hit_cap 统计/工具选择准确率）。"""
+"""G3 Agent 评测运行器（fake 脚本注入；快照命名/原子写/hit_cap 统计/工具选择准确率）。
+
+WP5c：Plan/Reflection 纳入评测口径——plan_rate/reflected_count、cases 逐例
+plan_steps/reflected、env.agent_flags（A/B 可区分）；真实黄金集扩例合法性
+（澄清闸门双向对账零成本钉进契约测试）。
+"""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -35,11 +41,18 @@ class _StubTool(BaseTool):
 
 
 class FakeChat:
-    """按问题脚本化：question -> chat_tools 响应序列。"""
+    """按问题脚本化：question -> chat_tools 响应序列。
 
-    def __init__(self, scripts: dict[str, list], plain: str = "基于已有结果作答。"):
+    WP5c：plan/reflect 复用主模型槽位 chat()——按 system 头部分流（规划器/自检器），
+    未配置对应回复时回落 plain（既有用例行为不变）。
+    """
+
+    def __init__(self, scripts: dict[str, list], plain: str = "基于已有结果作答。",
+                 plan_reply: str | None = None, reflect_reply: str | None = None):
         self.scripts = {q: list(v) for q, v in scripts.items()}
         self.plain = plain
+        self.plan_reply = plan_reply
+        self.reflect_reply = reflect_reply
 
     def chat_tools(self, messages, tools, temperature=0.3):
         q = next(m["content"] for m in messages if m["role"] == "user")
@@ -61,6 +74,11 @@ class FakeChat:
         yield self.plain
 
     def chat(self, messages, temperature=0.3):
+        head = messages[0]["content"] if messages else ""
+        if "规划器" in head and self.plan_reply is not None:
+            return self.plan_reply
+        if "自检器" in head and self.reflect_reply is not None:
+            return self.reflect_reply
         return self.plain
 
 
@@ -192,3 +210,124 @@ def test_write_snapshot_applies_rolling_retention(tmp_path, monkeypatch) -> None
     path = write_snapshot(report, S())
     assert path.is_file()
     assert len(list(results.glob("*.json"))) == 100  # 新快照入列，最旧的被滚出（原不清理=101，红）
+
+
+# ── WP5c：黄金集扩例合法性 + Plan/Reflection 评测口径 ──
+REPO_GOLDEN = (Path(__file__).resolve().parents[2].parent
+               / "eval" / "golden" / "agent_v0.jsonl")
+
+
+def _golden_num(case: dict) -> int:
+    return int(case["id"].split("-")[1])
+
+
+def test_golden_agent_v0_extended_valid() -> None:
+    """真实黄金集扩例（WP5c）：总数 40、id 唯一、新例带 note、澄清闸门双向对账。
+
+    对账零成本钉进契约测试：query_type=clarify 必须命中澄清判据、其余用例不得
+    误触发（误触发 → 付费跑批全红，2026-11-15 扩例轮先例）。
+    """
+    from bidqa.agent.clarify import is_underqualified
+
+    cases = load_golden(str(REPO_GOLDEN))
+    assert len(cases) == 40  # 33 + 7（WP5c）
+    ids = [c["id"] for c in cases]
+    assert len(ids) == len(set(ids))
+    fresh = [c for c in cases if _golden_num(c) >= 34]
+    assert 6 <= len(fresh) <= 8 and all(c.get("note") for c in fresh)
+    for c in cases:
+        assert c["id"] and c["question"] and c["expected_tools"]
+        assert all(c["expected_tools"]) and c.get("query_type")
+        assert is_underqualified(c["question"]) == (c["query_type"] == "clarify")
+    assert any(len(c["expected_tools"]) >= 2 for c in fresh)  # ANY-of 双渠道表达
+    # 复合/计划路径用例真实存在：should_plan 可命中（--plan 才有 plan_rate 观测意义）
+    from bidqa.agent.plan import should_plan
+    assert any(should_plan(c["question"]) for c in fresh)
+
+
+def test_golden_anyof_scores_single_channel_hit(tmp_path) -> None:
+    """ANY-of 语义（真实黄金集例）：期望多工具时命中任意一条合法路径即 PASS。"""
+    cases = load_golden(str(REPO_GOLDEN))
+    case = next(c for c in cases if c["id"] == "ag-009")  # db+graph 双渠道
+    assert len(case["expected_tools"]) == 2
+    golden = tmp_path / "one.jsonl"
+    golden.write_text(json.dumps(case, ensure_ascii=False) + "\n", encoding="utf-8")
+    chat = FakeChat({case["question"]:
+                     [tool_msg("search_graph", {"query_type": "supplier_topn"})]})
+    report = run_agent_eval(str(golden), make_factory(chat), settings=None)
+    assert report["cases"][0]["pass"] is True  # 只走图谱一条路径也过
+
+
+def test_agent_eval_plan_and_reflect_metrics(tmp_path) -> None:
+    """WP5c 口径：plan_rate=plan_steps 非空占比、reflected_count=补查用例数；
+    cases 逐例落两字段、env.agent_flags 记录 A/B 开关。"""
+    golden = tmp_path / "g.jsonl"
+    golden.write_text(
+        json.dumps({"id": "p1", "query_type": "db_agg", "question": "分别统计空调和电梯的中标项目数量",
+                    "expected_tools": ["search_database"]}, ensure_ascii=False) + "\n" +
+        json.dumps({"id": "p2", "query_type": "db_topn", "question": "空调采购金额最高的项目是哪个？",
+                    "expected_tools": ["search_database"]}, ensure_ascii=False) + "\n",
+        encoding="utf-8")
+    chat = FakeChat({
+        "分别统计空调和电梯的中标项目数量":
+            [tool_msg("search_database", {"query_type": "subject_agg"})],
+        "空调采购金额最高的项目是哪个？":
+            [tool_msg("search_database", {"query_type": "subject_topn"})],
+    }, plan_reply='{"steps": ["查空调项目数", "查电梯项目数"]}',
+       reflect_reply='{"need_more": true, "hint": "缺少时间维度拆分"}')
+    report = run_agent_eval(str(golden), make_factory(chat), settings=None,
+                            plan_enabled=True, reflect_enabled=True)
+    s = report["summary"]
+    assert s["total"] == 2
+    assert s["plan_rate"] == 0.5      # 复合题出计划、简单题不出
+    assert s["reflected_count"] == 2  # 两例工具轮后自检均判不足
+    assert report["env"]["agent_flags"] == {"plan": True, "reflect": True}
+    c1, c2 = report["cases"]
+    assert c1["plan_steps"] == ["查空调项目数", "查电梯项目数"] and c1["reflected"] is True
+    assert c2["plan_steps"] == [] and c2["reflected"] is True
+    # 既有口径不受影响
+    assert s["tool_selection_accuracy"] == 1.0 and s["hit_cap_rate"] == 0.0
+
+
+def test_agent_eval_default_flags_baseline(tmp_path) -> None:
+    """WP5c 基线：不传 flags → plan_rate=0、reflected_count=0、agent_flags=false；
+    开关关时规划/自检零模型调用（chat() 被误调即抛错 → 用例落 error，测试变红）。"""
+
+    class _NoExtraCallChat(FakeChat):
+        def chat(self, messages, temperature=0.3):
+            raise AssertionError("开关关闭时不应有规划/自检调用")
+
+    golden = tmp_path / "g.jsonl"
+    golden.write_text(
+        json.dumps({"id": "b1", "query_type": "db_agg", "question": "分别统计空调和电梯的中标项目数量",
+                    "expected_tools": ["search_database"]}, ensure_ascii=False) + "\n",
+        encoding="utf-8")
+    chat = _NoExtraCallChat({"分别统计空调和电梯的中标项目数量":
+                             [tool_msg("search_database", {"query_type": "subject_agg"})]})
+    report = run_agent_eval(str(golden), make_factory(chat), settings=None)
+    assert report["summary"]["plan_rate"] == 0.0
+    assert report["summary"]["reflected_count"] == 0
+    assert report["env"]["agent_flags"] == {"plan": False, "reflect": False}
+    case = report["cases"][0]
+    assert case["plan_steps"] == [] and case["reflected"] is False
+    assert "error" not in case  # 证明零额外调用（否则 loop 抛错落 error）
+
+
+def test_agent_eval_error_case_carries_plan_fields(tmp_path) -> None:
+    """WP5c：异常用例同样带 plan_steps/reflected（快照逐例字段恒在位，消费方免判键）。"""
+
+    class _BoomChat(FakeChat):
+        def chat_stream_round(self, messages, tools, temperature=0.3):
+            raise RuntimeError("boom")
+
+    golden = tmp_path / "g.jsonl"
+    golden.write_text(
+        json.dumps({"id": "e1", "query_type": "db_agg", "question": "q？",
+                    "expected_tools": ["search_database"]}, ensure_ascii=False) + "\n",
+        encoding="utf-8")
+    report = run_agent_eval(str(golden), make_factory(_BoomChat({})), settings=None)
+    case = report["cases"][0]
+    assert case["pass"] is False and "boom" in case["error"]
+    assert case["plan_steps"] == [] and case["reflected"] is False
+    assert report["summary"]["plan_rate"] == 0.0
+    assert report["summary"]["reflected_count"] == 0

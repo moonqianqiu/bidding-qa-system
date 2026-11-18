@@ -88,6 +88,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--mode", default="smoke", choices=["smoke", "agent", "rag"],
                         help="smoke=来源可定位（M1）；agent=工具循环全链路（M2，G3 内部函数层）；"
                              "rag=离线 RAGAS 三维判分（G2，判分槽位收费——真跑前报价确认）")
+    p_eval.add_argument("--plan", action="store_true",
+                        help="WP5a Plan-and-Solve 计划注入（仅 agent 模式；与基线批 A/B 对比，"
+                             "快照 env.agent_flags 记录；真跑=主模型槽位付费调用）")
+    p_eval.add_argument("--reflect", action="store_true",
+                        help="WP5a Reflection 证据自检（仅 agent 模式；与基线批 A/B 对比，"
+                             "快照 env.agent_flags 记录；真跑=主模型槽位付费调用）")
 
     p_user = sub.add_parser("user", help="用户体系管理（三角色 admin/user/guest）")
     user_sub = p_user.add_subparsers(dest="user_action", required=True)

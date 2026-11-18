@@ -28,7 +28,11 @@ def _eval_agent(args, _settings: Any) -> int:
         return AgentLoop(chat, registry, runner)
 
     try:
-        report = run_agent_eval(args.golden, loop_factory, get_settings())
+        # WP5c：--plan/--reflect 透传 AgentLoop.run（A/B 能力版开关；快照
+        # env.agent_flags 记录，与基线批可区分）。真跑=主模型槽位付费调用。
+        report = run_agent_eval(args.golden, loop_factory, get_settings(),
+                                plan_enabled=bool(args.plan),
+                                reflect_enabled=bool(args.reflect))
     except RuntimeError as exc:  # 工具不齐（服务宕机）→ 拒绝跑批，不产出误导分数
         print(f"评测中止：{exc}", file=sys.stderr)
         return 2

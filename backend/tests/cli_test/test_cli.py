@@ -307,3 +307,31 @@ def test_eval_agent_gate_none_means_not_measured(monkeypatch, tmp_path, capsys):
     assert run({"summary": {"total": 33, "tool_selection_accuracy": 1.0,
                             "hit_cap_rate": None, "clarify_trigger_rate": 1.0},
                 "cases": []}) == 1  # hit_cap None 曾 `or 0` → 误判通过（红）
+
+
+def test_eval_agent_plan_reflect_flags_passthrough(monkeypatch, tmp_path):
+    """WP5c：--plan/--reflect 透传 run_agent_eval（A/B 能力版开关）；缺省=False
+    （快照 env.agent_flags 由此可区分基线/能力版两批）。"""
+    import bidqa.container as container_mod
+    import bidqa.eval.agent_eval as agent_eval_mod
+
+    monkeypatch.setattr(container_mod, "build_agent_stack",
+                        lambda: (object(), object(), object()))
+    monkeypatch.setattr(agent_eval_mod, "write_snapshot",
+                        lambda *a, **k: tmp_path / "s.json")
+    gate = {"summary": {"total": 1, "tool_selection_accuracy": 1.0,
+                        "hit_cap_rate": 0.0, "clarify_trigger_rate": 1.0},
+            "cases": []}
+    captured: dict = {}
+
+    def fake_run(golden, factory, settings, **kwargs):
+        captured.update(kwargs)
+        return gate
+
+    monkeypatch.setattr(agent_eval_mod, "run_agent_eval", fake_run)
+    argv = ["eval", "--golden", str(tmp_path / "g.jsonl"), "--mode", "agent"]
+    assert cli.main(argv + ["--plan", "--reflect"]) == 0
+    assert captured == {"plan_enabled": True, "reflect_enabled": True}
+    captured.clear()
+    assert cli.main(argv) == 0  # 不给 flags → 默认 False（基线）
+    assert captured == {"plan_enabled": False, "reflect_enabled": False}
