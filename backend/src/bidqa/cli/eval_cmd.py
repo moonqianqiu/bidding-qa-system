@@ -78,11 +78,43 @@ def _eval_rag(args, _settings: Any) -> int:
     return 0 if avg is not None and avg >= 0.9 else 1
 
 
+def _eval_retrieval(args, _settings: Any) -> int:
+    """WP6 检索侧评测（docs/02 §0.1）：recall@k/MRR/nDCG@k，零 LLM 调用。
+
+    EMBEDDING_* 已配置=真实向量检索（每题 1 次嵌入调用，付费——真跑前报价确认）；
+    未配置=本地 BM25 灾备通道（免费）。观测指标暂无数值门禁：全 None=没测出
+    → 退出 1（P2-15 口径：None 不算通过）；有任一实测均值 → 0。
+    """
+    from bidqa.eval.retrieval_eval import (
+        build_retrieval_env,
+        run_retrieval_eval,
+        write_retrieval_snapshot,
+    )
+    from bidqa.rag.factory import build_retriever
+
+    settings = get_settings()
+    report = run_retrieval_eval(args.golden, build_retriever(),
+                                env=build_retrieval_env(settings))
+    path = write_retrieval_snapshot(report, settings)
+    print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
+    for r in report["cases"]:
+        if r["measured"]:
+            kv = " ".join(f"{k}={v}" for k, v in r["metrics"].items())
+            print(f"  [PASS] {r['id']} {r['question'][:32]} hits={r['hits']} {kv}")
+        else:
+            print(f"  [SKIP] {r['id']} {r['question'][:32]} refs=0 没测出（null≠0）")
+    print(f"快照: {path}")
+    avgs = report["summary"]["metrics_avg"]
+    return 0 if any(v is not None for v in avgs.values()) else 1
+
+
 def cmd_eval(args, _settings: Any) -> int:
     if args.mode == "agent":
         return _eval_agent(args, _settings)
     if args.mode == "rag":
         return _eval_rag(args, _settings)
+    if args.mode == "retrieval":
+        return _eval_retrieval(args, _settings)
     from bidqa.eval.smoke import run_smoke
     from bidqa.database.factory import build_repo
     from bidqa.rag.factory import build_retriever

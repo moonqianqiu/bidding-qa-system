@@ -335,3 +335,58 @@ def test_eval_agent_plan_reflect_flags_passthrough(monkeypatch, tmp_path):
     captured.clear()
     assert cli.main(argv) == 0  # 不给 flags → 默认 False（基线）
     assert captured == {"plan_enabled": False, "reflect_enabled": False}
+
+
+# ── WP6：retrieval CLI 模式（fake 注入：不真跑检索、不调 embedding API）──
+def _retrieval_report(avg_recall, cases):
+    return {"kind": "retrieval",
+            "summary": {"metrics_avg": {"recall@5": avg_recall, "recall@10": avg_recall,
+                                        "ndcg@5": avg_recall, "ndcg@10": avg_recall,
+                                        "mrr": avg_recall}},
+            "cases": cases}
+
+
+def test_eval_cli_accepts_retrieval_mode(monkeypatch, tmp_path, capsys):
+    """WP6：--mode retrieval 接线；env 由 build_retrieval_env 组装（指纹脱敏+语料注记）。"""
+    captured: dict = {}
+    report = _retrieval_report(
+        0.5, [{"id": "rag_flow_001", "question": "q", "measured": True, "hits": 5,
+               "metrics": {"recall@5": 0.5, "recall@10": 0.5, "ndcg@5": 0.4,
+                           "ndcg@10": 0.4, "mrr": 1.0}}])
+
+    def fake_run(golden, retriever, ks=(5, 10), env=None):
+        captured["golden"] = golden
+        captured["env"] = env
+        return report
+
+    monkeypatch.setattr("bidqa.database.factory.build_repo", lambda: object())
+    monkeypatch.setattr("bidqa.rag.factory.build_retriever", lambda: object())
+    monkeypatch.setattr("bidqa.eval.retrieval_eval.run_retrieval_eval", fake_run)
+    monkeypatch.setattr("bidqa.eval.retrieval_eval.write_retrieval_snapshot",
+                        lambda *a, **k: tmp_path / "r.json")
+    assert cli.main(["eval", "--golden", str(tmp_path / "g.jsonl"),
+                     "--mode", "retrieval"]) == 0  # 有实测均值 → 通过
+    out = capsys.readouterr().out
+    assert "metrics_avg" in out and "快照" in out and "recall@5=0.5" in out
+    assert captured["golden"] == str(tmp_path / "g.jsonl")
+    # env 组装在位：语料注记 + 指纹槽（retrieval 模式无 chat/judge 调用，仅留档）
+    assert captured["env"]["note"] and "75" in captured["env"]["note"]
+    assert {"link", "chat", "embedding"} <= set(captured["env"])
+
+
+def test_eval_cli_retrieval_all_none_is_not_measured(monkeypatch, tmp_path, capsys):
+    """P2-15 口径：全 None=没测出 → 退出 1，None 不冒充通过。"""
+    report = {"kind": "retrieval",
+              "summary": {"metrics_avg": {"recall@5": None, "recall@10": None,
+                                          "ndcg@5": None, "ndcg@10": None, "mrr": None}},
+              "cases": [{"id": "c1", "question": "q", "measured": False,
+                         "metrics": {"recall@5": None}}]}
+    monkeypatch.setattr("bidqa.database.factory.build_repo", lambda: object())
+    monkeypatch.setattr("bidqa.rag.factory.build_retriever", lambda: object())
+    monkeypatch.setattr("bidqa.eval.retrieval_eval.run_retrieval_eval",
+                        lambda *a, **k: report)
+    monkeypatch.setattr("bidqa.eval.retrieval_eval.write_retrieval_snapshot",
+                        lambda *a, **k: tmp_path / "r.json")
+    assert cli.main(["eval", "--golden", str(tmp_path / "g.jsonl"),
+                     "--mode", "retrieval"]) == 1
+    assert "没测出" in capsys.readouterr().out

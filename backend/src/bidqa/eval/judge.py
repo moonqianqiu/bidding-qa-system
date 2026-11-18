@@ -33,6 +33,12 @@ def judge_fingerprint(settings: Any) -> tuple[str, str, str]:
     return _fingerprint(settings.JUDGE_BASE_URL, settings.JUDGE_API_KEY, settings.JUDGE_MODEL)
 
 
+def embedding_fingerprint(settings: Any) -> tuple[str, str, str]:
+    """WP6 检索评测快照 env 用（密钥同款脱敏，不回显明文）；未配置时由调用方判 has_embedding。"""
+    return _fingerprint(settings.EMBEDDING_BASE_URL, settings.EMBEDDING_API_KEY,
+                        settings.EMBEDDING_MODEL)
+
+
 def validate_heterogeneous(settings: Any) -> tuple[str, str, str]:
     """执行前强制校验（docs/02 G2）。完全相同 → 5032 拒跑；仅同端点 → 告警。"""
     if not settings.has_judge:

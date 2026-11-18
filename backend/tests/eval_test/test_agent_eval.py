@@ -147,10 +147,17 @@ def test_agent_eval_summary_and_snapshot(tmp_path, monkeypatch) -> None:
     assert report["failed_cases"] == [{"id": "a3", "question": "金额最高前3项目？"}]
 
     # 快照命名与原子写（§4.4）
+    # 落盘隔离（AGENTS 红线）：RESULTS_DIR 在 P1-20/P1-33 后是 Path(__file__) 绝对锚定，
+    # 单纯 chdir 不再生效——必须显式打桩到 tmp_path，否则全量 pytest 每次都往
+    # backend/eval/results/ 写一份 abc1234 假快照（2026-11-19 实测发现的历史污染）。
+    results = tmp_path / "results"
+    results.mkdir()
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("bidqa.eval.agent_eval.RESULTS_DIR", results)
     monkeypatch.setattr("bidqa.eval.agent_eval.git_short_hash", lambda: "abc1234")
     path = snapshot_path("agent", "nojudge")
     atomic_write_json(path, report)
+    assert path.parent == results  # 只写临时目录，绝不落真实 results/
     assert path.name.startswith("agent_") and "abc1234" in path.name
     assert path.name.endswith("_nojudge.json")
     assert json.loads(path.read_text(encoding="utf-8"))["kind"] == "agent"
