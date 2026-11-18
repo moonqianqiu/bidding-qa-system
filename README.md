@@ -2,7 +2,7 @@
 
 > 可自托管的招投标领域 RAG + Agent 问答系统：用户用自然语言提问，系统自动判断去
 > **知识库 / 知识图谱 / 业务数据库 / 联网** 取数，给出**带来源引用**的答案，数字类问题自动配图表。
-> 状态：**v2.4 审计修复完成**（2026-11-16：v2.3 双通道图片之后，按 AUDIT_2026-11-15 完成 8 P0 修复、WP0-WP4 收口与阶段 5 可做部分）——后端测试 643 例、分层守卫 R1-R11、pyrefly 49（零新增门禁）。
+> 状态：**v2.4 审计修复 + 夜间能力包**（2026-11-16 审计修复；2026-11-19 夜间：Vite 迁移 / 图谱关系可见化 / OTel / Plan-Reflection / 评测与检索指标 / 选型报告，未打 tag）——后端测试 675 例、分层守卫 R1-R11、pyrefly 49（零新增门禁）。
 > 本文边界：只回答「这是什么、怎么跑起来、下一份文档读哪个」。
 
 ## 1. 能力与边界
@@ -83,7 +83,7 @@ cd frontend && npm run dev                                            # http://1
 ## 6. 质量与验收
 
 ```bash
-cd backend && uv run pytest -q        # 全量全绿（服务离线时集成例 skip 属预期；当前 643 例）
+cd backend && uv run pytest -q        # 全量全绿（服务离线时集成例 skip 属预期；当前 675 例）
 cd frontend && npm run typecheck      # 前端类型检查（Vite 版，CI 同款 npx tsc --noEmit）
 bash deploy/e2e-chat.sh               # SSE 三走向（机器断言版；真实调用主模型）
 cd backend && uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode agent
