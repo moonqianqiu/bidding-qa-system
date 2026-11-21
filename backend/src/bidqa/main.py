@@ -22,7 +22,12 @@ def _lifespan(settings: Settings):
     """应用生命周期（docs/01 §6）：启动装 OTel span 导出（未配置=no-op）；
     停机四步（审计 P1-8）：①停收新请求=uvicorn 职责（收到停机信号先关监听再进本
     钩子）；②活动 SSE 广播 error 5031；③cancel futures（工具池/压缩池排空排队
-    任务，运行中的交给守护线程语义）；④关连接池 + tracing 收尾。"""
+    任务，运行中的交给守护线程语义）；④关连接池 + tracing 收尾。
+
+    ② 的主投递点在 cli/serve.BidqaServer.shutdown() 入口（uvicorn 0.54 先等连接
+    收尾/超时 cancel 再进本钩子——挂这里广播时通道已被注销、客户端只见裸断连，
+    审计 P1-8 广播可达性修复）；本钩子的广播保留为兜底（嵌入式/非 uvicorn 场景）。
+    """
     @asynccontextmanager
     async def life(app: FastAPI):
         from bidqa.obs.tracing import setup_tracing
@@ -32,7 +37,7 @@ def _lifespan(settings: Settings):
         from bidqa.api.chat.sse import broadcast_shutdown
         from bidqa.application.chat.worker import shared_runner
 
-        broadcast_shutdown()  # ②
+        broadcast_shutdown()  # ②（主投递点=BidqaServer.shutdown 入口，此处兜底）
         shared_runner().close()  # ③（工具池 cancel futures）
         from bidqa.agent import compress
 

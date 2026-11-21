@@ -63,6 +63,36 @@ def test_broadcast_shutdown_reaches_active_channel() -> None:
     assert active_channel_count() == before  # 生成器结束 → 通道注销
 
 
+def test_broadcast_reaches_bound_channel_while_consuming() -> None:
+    """停机实况口径（P1-8 回归）：广播触达「已绑定、正在等事件」的通道——
+    lines() 先迭代（call_soon_threadsafe→asyncio 队列绑定），broadcast 后 error
+    事件送达且迭代正常结束、通道注销。与 test_broadcast_shutdown_reaches_active_channel
+    互补：那边钉注册表计数（绑定前缓冲路径），这边钉运行时投递路径。"""
+
+    async def scenario() -> list[str]:
+        import asyncio
+
+        from bidqa.api.chat.sse import SseChannel, broadcast_shutdown
+
+        ch = SseChannel(ping_interval=5.0)
+        ch.emit("status", {"stage": "分析中"})  # 绑定前投递（缓冲路径）
+        got: list[str] = []
+
+        async def consume() -> None:
+            async for line in ch.lines(t0=0.0, build_done_event=lambda *a: {}):
+                got.append(line)  # 消费 status 后挂起等下一条 = 停机前的进行中连接
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.05)  # lines() 完成绑定并消费 status
+        broadcast_shutdown()  # 停机入口广播（BidqaServer.shutdown 同款调用）
+        await asyncio.wait_for(task, timeout=3.0)  # error 事件送达后迭代必须结束
+        return got
+
+    got = asyncio.run(scenario())
+    assert '"type": "status"' in got[0]
+    assert '"type": "error"' in got[-1] and "5031" in got[-1], f"广播未触达: {got[-1]!r}"
+
+
 def test_channel_unregister_on_result_path() -> None:
     """正常收尾（_result→done）同样注销——注册表只含活动通道。"""
     from bidqa.api.chat.sse import SseChannel, active_channel_count
