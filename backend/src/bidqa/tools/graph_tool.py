@@ -53,8 +53,9 @@ class SearchGraphArgs(BaseModel):
 class SearchGraphTool(BaseTool[SearchGraphArgs]):
     name = "search_graph"
     description = ("查询项目关系图谱（Neo4j，实体归一后口径）的**实体维度分布**：标的物为 X 的"
-                   "供应商排名（subject_supplier，entity 传标的物片段）、按供应商名的中标分布、"
-                   "采购人/地区分布、标的物频次。排名统计类问题优先 search_database"
+                   "供应商排名（subject_supplier，entity 传标的物片段）、供应商 TopN/按中标总额"
+                   "排名（supplier_topn，实体归一口径）、采购人/地区分布、标的物频次。"
+                   "排名统计类问题优先 search_database"
                    "（业务库明细更全）；但以下仅图谱支持：平均中标金额/均价（amount_agg，"
                    "业务库只有总额与项目数）、按采购人名称片段过滤（purchaser_dist 的 entity，"
                    "如传『医院』——业务库采购人列只支持等值匹配全名）。金额单位=元。")

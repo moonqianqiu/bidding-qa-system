@@ -81,8 +81,12 @@ class SearchDatabaseArgs(BaseModel):
 
 class SearchDatabaseTool(BaseTool[SearchDatabaseArgs]):
     name = "search_database"
-    description = ("查询招投标业务库（项目明细表）的**数值统计与明细**：各标的物/各地区项目数与金额、"
-                   "TopN 排名、按月趋势、关键词明细检索。问『多少个/多少钱/前几名/明细』优先用它。"
+    description = ("查询招投标业务库（项目明细表）的**数值统计与明细**：供应商/采购人 TopN 排名"
+                   "（supplier_topn/purchaser_topn，按累计中标总额降序，默认 Top 10）、"
+                   "各标的物/各地区项目数与金额、按月趋势、关键词明细检索。"
+                   "「按中标总额看排名靠前的供应商是谁」这类排名/TopN 题无需地区/时间/标的物限定，"
+                   "用 supplier_topn 直接查全库榜即可作答。"
+                   "问『多少个/多少钱/前几名/明细』优先用它。"
                    "keyword（如『空调』）对全部查询类型生效：先过滤再聚合/取明细。"
                    "可用 region / subject_matter / winner / purchaser 等白名单列过滤（地区传省或市均可）。"
                    "明细检索可用 order_by=amount_desc/amount_asc 按中标金额排序（仅 detail_search）。"
