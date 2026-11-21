@@ -25,6 +25,36 @@ CONSTRAINTS = (
     "CREATE CONSTRAINT IF NOT EXISTS FOR (su:Supplier) REQUIRE su.name IS UNIQUE",
 )
 
+# ── Location.level 判定（NIGHT-008：原建图硬编码 '省'，40 节点全错标）──
+# 省级行政区全名（直辖市除外：省/市两级模型里直辖市本身即市级实体，归 '市'）
+_PROVINCE_NAMES = frozenset((
+    "河北省", "山西省", "辽宁省", "吉林省", "黑龙江省", "江苏省", "浙江省", "安徽省",
+    "福建省", "江西省", "山东省", "河南省", "湖北省", "湖南省", "广东省", "海南省",
+    "四川省", "贵州省", "云南省", "陕西省", "甘肃省", "青海省", "台湾省",
+    "内蒙古自治区", "广西壮族自治区", "西藏自治区", "宁夏回族自治区", "新疆维吾尔自治区",
+    "香港特别行政区", "澳门特别行政区",
+))
+# 省级惯用简称（省名去「省」后缀 + 自治区/特别行政区通名省写）；命中同样视为纯省级名
+_PROVINCE_SHORT = frozenset((
+    "河北", "山西", "辽宁", "吉林", "黑龙江", "江苏", "浙江", "安徽", "福建", "江西",
+    "山东", "河南", "湖北", "湖南", "广东", "海南", "四川", "贵州", "云南", "陕西",
+    "甘肃", "青海", "台湾", "内蒙古", "广西", "西藏", "宁夏", "新疆", "香港", "澳门",
+))
+
+
+def location_level(name: str | None) -> str:
+    """按 Location 名称判定行政层级（docs/01 §4.2 `:Location {name, level}` 省/市两级）。
+
+    纯省级行政区名（省/自治区/特别行政区全名或惯用简称）→ '省'；
+    直辖市（北京市等）在两级模型中本身即市级实体 → '市'；
+    其余一切名称（省+市拼接、地级市、自治州、地区、盟等下级名）→ '市'。
+    空名不会建节点（upsert 的 FOREACH 空值守卫），防御性归 '市'。
+    """
+    text = (name or "").strip()
+    if text in _PROVINCE_NAMES or text in _PROVINCE_SHORT:
+        return "省"
+    return "市"
+
 
 class NeoClient:
     def __init__(self, uri: str, user: str, password: str, query_timeout: float = 30.0):
@@ -83,7 +113,7 @@ class NeoClient:
     FOREACH (_ IN CASE WHEN $agency <> '' THEN [1] ELSE [] END |
       MERGE (a:Agency {name: $agency}) MERGE (a)-[:AGENTED]->(p))
     FOREACH (_ IN CASE WHEN $region <> '' THEN [1] ELSE [] END |
-      MERGE (l:Location {name: $region}) SET l.level = '省' MERGE (p)-[:IN]->(l))
+      MERGE (l:Location {name: $region}) SET l.level = $level MERGE (p)-[:IN]->(l))
     """
 
     def upsert_projects(self, rows: list[dict[str, Any]]) -> int:
@@ -102,7 +132,8 @@ class NeoClient:
                             purchaser=(row.get("purchaser") or "").strip(),
                             winner=(row.get("winner") or "").strip(),
                             agency=(row.get("agency") or "").strip(),
-                            region=region)
+                            region=region,
+                            level=location_level(region))  # NIGHT-008：按名称判级，替代硬编码 '省'
                 count += 1
         return count
 
