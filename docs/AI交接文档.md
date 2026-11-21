@@ -2,21 +2,21 @@
 
 > **给接手的 AI 助手 / 未来会话**：项目现在什么状态、还差什么、怎么验证。
 > 分工：规则与红线在 `AGENTS.md`；命令与排障在 `docs/部署手册.md`；图解走读在 `docs/04`；设计细节在 `docs/01-03`。
-> 本文只放**易变的状态**：现状快照、未完成清单、环境速览、检查清单。更新：2026-11-21（v2.5 定版前同步：P1-8 广播可达性修复+停机演练复验、ag-010 误澄清修复、OTel OTLP 实接实证、图谱 34,800 边逐项对账；Agent 40 例复测报价待批）。
+> 本文只放**易变的状态**：现状快照、未完成清单、环境速览、检查清单。更新：2026-11-21（v2.5 定版前同步：P1-8 广播可达性修复+停机演练复验、ag-010 误澄清修复、OTel OTLP 实接实证、图谱 34,800 边逐项对账；Agent 40 例复测报价待批；语料素材 10 法规+23 FAQ 未入库（嵌入待报价）、ingest .txt 直入 c7e0590）。
 
 ## 1. 一分钟上手（下一任先做这四件事）
 
 1. 读 `AGENTS.md`（硬约束 10 条 + 预算红线）→ `docs/04` §6（一次提问的代码级走读，路径已对齐 v2.0 结构）
 2. 结构速览：`docs/01` §1 分层树——**api=HTTP 适配壳、application=业务用例、工厂在各包 factory.py、组合根只有 container.build_agent_stack**；分层边界由 `tests/test_layering.py` AST 钉死（违规即红）
 3. 拉起服务：`bash deploy/start.sh` → **立刻** `curl 127.0.0.1:8000/api/health` 六组件全 `ok`
-4. 跑验证三连：`cd backend && uv run pytest -q`（682 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
+4. 跑验证三连：`cd backend && uv run pytest -q`（717 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
 
 ## 2. 质量现状（快照，接手时按 §6 复核）
 
 | 项 | 状态 | 复核命令 |
 |---|---|---|
 | 标签 | `v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` → `v2.3-dual-vision` → `v2.4-audit-repair` → **`v2.5`（2026-11-21 定版，用户已批准）** | `git tag -l && git log --oneline -12` |
-| 后端测试 | **706 passed 全绿（含 Neo4j/PG 集成，服务需在线；2026-11-21 实跑：675→680 为 ag-010 修复 +5 契约例、680→682 为 P1-8 uvicorn+TCP SSE 回归 +2、682→706 为 NIGHT-008 level +17 与 NIGHT-014 退出码 +7）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
+| 后端测试 | **717 passed 全绿（含 Neo4j/PG 集成，服务需在线；2026-11-21 实跑：675→680 为 ag-010 修复 +5 契约例、680→682 为 P1-8 uvicorn+TCP SSE 回归 +2、682→706 为 NIGHT-008 level +17 与 NIGHT-014 退出码 +7、706→717 为 ingest .txt 直入 +11）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
 | 分层守卫 | `tests/test_layering.py` **R1-R11** 全部空集（永久护栏）+ 每条规则「能红」自检 | `pytest tests/test_layering.py -q` |
 | 类型检查 | pyrefly **49 条存量冻结基线（pyrefly-baseline.json），0 new**（bad-override ×5 + missing-attribute ×3 已清零，余为 psycopg 行类型噪音；2026-11-21 复核 0 new） | `uv run --with pyrefly pyrefly check src` |
 | 前端类型 | 绿（**Vite + React 19 + Tailwind 4**，`react-router-dom` 五路由；`npm run build` 通过；2026-11-21 typecheck+build 绿，主 chunk 501.62 kB 体积警告已登记 backlog，非门禁） | `cd frontend && npm run build` |
@@ -41,10 +41,11 @@
 | `detail_search` 金额排序 | ✅ 2026-11-15 | `order_by`（amount_desc/asc + 中文别名容错归一）仅 detail_search 支持，`ORDER BY award_amount … NULLS LAST`（金额取不到沉底）；聚合/趋势固定口径拒绝（args + bp_query 双层）；真机三态核对 PASS |
 | 会话回放两债 | ✅ 2026-11-15 两债全清 | ①降级直答落库（efbbb4e）：worker 异常分支对称持久化——游客进 guest_history、普通用户附 done 落 PG，刷新后降级回答不再整条消失；②反馈态回查（A7 债②）：`GET /api/conversations/{id}/feedback`（同问题取最新）+ 前端 openConversation 并联回查映射 message.feedback，👍/👎 刷新还原 |
 | 离群值溯源 | 🟡 2026-11-16 数据侧定界，核源表待甲方 | 免费盘点（PG 实查）：8,489 行单批次 `sample-2023`，金额中位数 4,600 元、均值 251.2 万元；>1 亿 22 行（0.26%），其中 **BZGY2023CG141 涡阳托养服务 66 亿**为 2,630× 均值、项目性质与金额严重不符（疑源表多写零/单位错）；`content`/`source_url` 全空、`data/raw/` 无源 xlsx——**无法自证原值，须甲方核源表**；按红线不猜测不改写（保留原值并在答案中如实展示） |
-| embed_store 编码文本不一致 | ✅ 2026-11-16 代码统一 / 🟡 存量待重 ingest | 三通道共用 `encode_text(chunk)` = `title`+可选`ctx_summary`+`text`（空段不空行）；新增一致性测试（dense 入参 == bm25 入参，变异可红）。**存量 75 向量仍是旧口径**：重新 ingest 需原始 FAQ xlsx，而 `data/raw/` 为空——xlsx 恢复后执行 `bidqa ingest knowledge --input <xlsx>`（嵌入 API 付费，先报价确认） |
+| embed_store 编码文本不一致 | ✅ 2026-11-16 代码统一 / 🟡 存量待重 ingest | 三通道共用 `encode_text(chunk)` = `title`+可选`ctx_summary`+`text`（空段不空行）；新增一致性测试（dense 入参 == bm25 入参，变异可红）。**存量 75 向量仍是旧口径**：重新 ingest 需原始 FAQ xlsx——原始 xlsx 仍未恢复（2026-11-21 采集的 `faq_topic_376023.jsonl` 为清洗产物，非原 xlsx），xlsx 恢复后执行 `bidqa ingest knowledge --input <xlsx>`（嵌入 API 付费，先报价确认） |
 | clarify.py PROVINCES 词表副本 | ✅ 2026-11-15 收口 | clarify 改导入 `ingest/regions.PROVINCES`（agent→ingest 分层允许，layering 实测确认），历史副本删除；锁定测试 34 省逐一可匹配 + 同对象断言 |
 | DI 直调残留 | 测试隔离债（低） | `api/system/metrics.py` 的 `_online_stats`、`_qdrant_counts` 读配置走 get_settings()（仅读端点内部，无测试依赖真实 .env，危害低）；新代码一律 Depends |
-| 真实 PDF 语料导入 | 🟡 链路就绪，语料缺原件 | `bidqa ingest pdf` 链路已通（MinerU 云端 + pdfplumber 兜底，有契约测试）；`data/raw/` 为空——**缺用户提供 PDF 原件**，命令：`uv run bidqa ingest pdf --input <x.pdf> --source-type 法规 --title "<标题>" --dry-run`（先 dry-run 后真跑；真跑嵌入付费） |
+| 真实 PDF 语料导入 | 🟡 链路就绪（.txt 直入已支持）；PDF 原件仍缺 | `bidqa ingest pdf` 链路已通（MinerU 云端 + pdfplumber 兜底，有契约测试）；2026-11-21 起 .txt 法规采集产物可直入同一管道（c7e0590，见下行「语料素材」）；**PDF 原件仍缺**，命令：`uv run bidqa ingest pdf --input <x.pdf> --source-type 法规 --title "<标题>" --dry-run`（先 dry-run 后真跑；真跑嵌入付费） |
+| **语料素材（2026-11-21 采集，未入库）** | 🟡 待嵌入报价确认 | 法规 10 篇 .txt（01 招标投标法实施条例 2011 版、02 政采法实施条例 658 号、03 87 号令、04 94 号令、05 110 号令、06 101 号令、07 102 号令、08 74 号令、09 政府采购法 2002 版、10 招标投标法 2017 修正版）+ 徽采云 FAQ 23 组（`faq_topic_376023.jsonl`），均在 `data/raw/`（gitignored）。**版本口径**：01=2011 原始公布版、09=2002 原版（2014 修正未取）、10=2017 修正版。入库命令形态：`uv run bidqa ingest pdf --input <.txt> --source-type 法规 --title "标题（文号）" --batch-id reg-20261121 --url <来源URL>`（txt 直入，c7e0590）；嵌入/入库未执行（付费闸门，跑前向用户报价确认），NIGHT-020 清洗进行中 |
 | 在线评测开启 | ✅ 2026-11-15 已开启（用户改 .env：`ONLINE_EVAL_ENABLED=true`、`ONLINE_EVAL_SAMPLE_RATE=0.03`） | 真机三验证 PASS：online jsonl 行为指标落盘（rounds/tool/elapsed 免费）、`GET /api/eval/runs` 200（新快照可查）、metrics `online_eval` 节 enabled/behavior=1/queued=0；判分 3% 抽样 + 点踩 100% 必评 |
 | **审计修复 WP0-WP4** | ✅ 2026-11-15~16 阶段 0+1+2+3+4 全部收口（每轮独立 commit，`git log` 可数；接 AUDIT_2026-11-15.md） | **已修**：P0-7 隔离库、P0-3 429 红线、P0-4 判分缓存、P0-8 部署断链、P1-1 归属校验、P1-2 fail-open、P1-3 live role、P1-4 compare_digest、P1-6 工厂门禁、P1-5 告警路径、P0-1+P1-9 Runner、P1-14/15 图谱 Cypher、**P0-2 澄清工具（付费重跑 33/33=1.0）**、P1-10/11 缓存、P1-12/13+P2-31/32、P1-17~19+P2-15~18 评测口径、**阶段 2**：P1-7 守护池、P1-8 lifespan 四步（2026-11-21 广播可达性修复+演练复验收口，见 §3 增补行）、P1-20+P2-34 双检锁、P1-21 SSE 异步化、P2-4/5/33/39、**阶段 3（前端）**：P0-5 单机死循环、P0-6 并发发送闸、P1-23 反馈错轮+回滚、P1-24 卸载 cleanup、P1-25 refreshList 合并、P1-26 await 切换守卫、P1-27 游客 provider 服务端门禁（变异自证）、A11 日志过滤 UI、A12 单组隐藏切换器；**阶段 4**：P2-1 tempdir 写探测、P2-2 measure.sh 入库+P2-47 文件面、P1-28 5001/5032 契约、子进程导入守卫样板、P1-29 workers 告警化、P1-30 联网名册留空、P1-31 CI 五 job+pyrefly 基线、P1-32/33/34+D1-D25 文档漂移、P2-42 e2e 断言收紧（S4/S5/S6 变异扩条）、P2-49 pycache 清理。**验证门：579 passed / layering 3 / pyrefly 0 new / tsc+build 绿 / measure.sh doc_defects=0 / 浏览器真机回归**。**阶段 5（可做部分已收）**：P1-16 batch 作用域（建图 `--scope-batch`、标的物写回 `--batch-id`，缺省全表时告警）、embed_store 三通道编码统一；数据侧：feedback 孤儿点踩 163 行已备份后清除、离群值定量定界待甲方核源表、PDF 语料缺原件（命令就绪）。**挂起待拍板**：P1-5 强制收口（需用户 .env 改 ADMIN_PASSWORD + `bidqa user reset`）、真实控制台停机演练复验 |
 | **夜间能力包（2026-11-18/19）** | ✅ WP1-WP3 + WP6-WP7（连同 WP5 共 8 单收口） | 前端 **Vite + React 19**（5 路由/router/proxy/Tailwind4，Next 依赖清零）；**图谱关系可见化**（console `relationships` 5 类 + `relationship_total=34,800`，Neo4j Browser 验证查询入部署手册）；**OTel span**（默认 no-op、OTLP 可接 Langfuse；异常只记类型+栈帧）；**检索指标 + `--mode retrieval`**（75 向量局限声明随快照落档）；**选型与链路优化报告**（embedding 7 候选 / 向量库 4 候选 / 评测协议 / O1-O7 优化清单，零编造数字）。**验证**：675 passed / layering 3 / pyrefly 0 new / tsc+build 绿 / doc_defects=0 / e2e 变异 PASS。**未验证/待批**：Agent 40 例新基线付费 A/B 重跑、retrieval 真实基线（需语料+embedding 报价）、浏览器端「执行计划」真实问答验证（主模型端点未开）、OTel 真实 collector/Langfuse 对接、WP7 参数实测（语料到位后） |
@@ -79,7 +80,7 @@
 
 - [ ] `git status` 干净；`git log --oneline -12` 覆盖审计修复 WP0-WP4 轮次（每轮独立 commit）
 - [ ] `bash deploy/start.sh` 后 `/api/health` 六组件全 ok
-- [ ] `cd backend && uv run pytest -q` → 682 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
+- [ ] `cd backend && uv run pytest -q` → 717 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
 - [ ] `cd frontend && npm run build` 绿（五路由预渲染）
 - [ ] `bash deploy/e2e-chat.sh --mutation-check` PASS（免费）；真跑三走向属付费动作（跑前告知用户）
 - [ ] `pytest tests/test_layering.py` 3 passed（分层守卫全绿；allowlist 应全空集）
