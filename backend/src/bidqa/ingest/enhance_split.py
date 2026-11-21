@@ -19,7 +19,9 @@ COST_TOKENS_IN_PER_BLOCK = 600
 COST_TOKENS_OUT_PER_BLOCK = 100
 
 _CHAPTER_RE = re.compile(r"(?=第[一二三四五六七八九十百零\d]+章)")
-_CLAUSE_RE = re.compile(r"(?=第[一二三四五六七八九十百零\d]+条)")
+# 条头判定（NIGHT-024）：仅「行首（允许全/半角空格缩进）+ 条号后接空白或结尾」的「第X条」算条头。
+# 行文中引用（本办法第X条规定的／第X条第二款）不切开、不赋 ref；章头口径不变（本次只收条头）。
+_CLAUSE_RE = re.compile(r"(?m)^[\t 　]*(?=第[一二三四五六七八九十百零\d]+条(?:\s|$))")
 _FAQ_Q_RE = re.compile(r"^\s*(?:问|Q)[:：]", re.M)
 _CHUNK_FALLBACK = 500
 _SUMMARY_PROMPT = (
@@ -46,7 +48,8 @@ def estimate_cost(blocks: int) -> tuple[int, int, int]:
 
 
 def _ref_of(text: str) -> str:
-    m = re.match(r"\s*(第[一二三四五六七八九十百零\d]+条)", text)
+    """块首条号 → ref（与 _CLAUSE_RE 同一判定：条号后须接空白/结尾，防引用块误标，NIGHT-024）。"""
+    m = re.match(r"\s*(第[一二三四五六七八九十百零\d]+条)(?=\s|$)", text)
     return m.group(1) if m else ""
 
 

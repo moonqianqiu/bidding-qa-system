@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -75,6 +76,48 @@ def test_split_text_clause_boundaries() -> None:
     assert len(pieces) == 3
     assert pieces[1].startswith("第一条")
     assert pieces[2].startswith("第十条")
+
+
+# NIGHT-024 伪条头契约：行文引用（本办法第X条规定的 / 第X条第二款）不得成为条头块。
+# 三行素材逐一取自 data/raw/regulations_20261121 真实法规（87号令/613号令/招标投标法），
+# 内联固化防止 data 目录变更影响断言（NIGHT-023 正在并发清洗该目录）。
+_REG_REAL = (
+    "第三章 采购程序\n"
+    "第六十五条 评标委员会发现招标文件存在歧义、重大缺陷导致评标工作无法进行，应当停止评标工作。\n"
+    "（八）核对评标结果，有本办法第六十四条规定情形的，要求评标委员会复核或者书面说明理由，"
+    "评标委员会拒绝的，应予记录并向本级财政部门报告；\n"
+    "\u3000\u3000第四十二条\u3000使用通过受让或者租借等方式获取的资格、资质证书投标的，"
+    "属于招标投标法第三十三条规定的以他人名义投标。\n"
+    "\u3000\u3000投标邀请书应当载明本法第十六条第二款规定的事项。\n"
+)
+
+_FAKE_HEAD_RE = re.compile(r"^第[一二三四五六七八九十百零\d]+条(?=\s|$)")
+
+
+def test_split_text_midline_refs_not_clause_boundaries() -> None:
+    """行文引用不得切开成「第X条…」伪条头块；真条头（含全角缩进条头）仍逐条成块。"""
+    pieces = split_text(_REG_REAL)
+    fake_heads = [p[:14] for p in pieces
+                  if p.startswith("第六十四条") or p.startswith("第三十三条")
+                  or p.startswith("第十六条")]
+    assert fake_heads == []                       # 伪条头块=0（改前此处为伪块列表）
+    assert "有本办法第六十四条规定情形" in "\n".join(pieces)   # 引用句保持完整单块
+    assert "招标投标法第三十三条规定的以他人名义投标" in "\n".join(pieces)
+    assert "载明本法第十六条第二款规定的事项" in "\n".join(pieces)
+    heads = [p for p in pieces if p.startswith("第六十五条") or p.startswith("第四十二条")]
+    assert len(heads) == 2                        # 真条头不丢（含全角缩进条头）
+
+
+def test_split_markdown_fake_clause_header_blocks_zero() -> None:
+    """ref 命中但块首非真条头形态（条号后须接空白/结尾）的伪条头块=0；真条头 ref 逐条有序。"""
+    blocks = split_markdown(f"<!-- page:1 -->\n{_REG_REAL}")
+    fake = [(b.ref, b.text[:12]) for b in blocks
+            if b.ref and not _FAKE_HEAD_RE.match(b.text)]
+    assert fake == []                             # 伪条头块=0（NIGHT-024 自建口径）
+    refs = [b.ref for b in blocks if b.ref]
+    assert refs == ["第六十五条", "第四十二条"]     # 引用行不占 ref，真条头不丢
+    ref_block = next(b for b in blocks if "本办法第六十四条规定情形" in b.text)
+    assert ref_block.ref == "第六十五条"           # 引用句归属其所在条文块
 
 
 def test_split_text_faq_pairs() -> None:
