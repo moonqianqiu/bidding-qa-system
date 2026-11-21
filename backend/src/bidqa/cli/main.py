@@ -74,7 +74,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     from bidqa.database.qdrant import SOURCE_TYPES  # 白名单单一来源
     p_pdf = ingest_sub.add_parser("pdf", help="PDF → 页码契约 Markdown → 切分 → 嵌入入库（F2/F3/F4）")
-    p_pdf.add_argument("--input", required=True, help="PDF 路径")
+    p_pdf.add_argument("--input", required=True,
+                       help="PDF 路径（.txt 后缀按同一契约直入，如法规采集产物 cleaned.txt）")
     p_pdf.add_argument("--source-type", required=True, choices=SOURCE_TYPES,
                        help="来源类型（白名单见 database/qdrant.py）")
     p_pdf.add_argument("--title", required=True, help="来源标题（Chunk.title / 溯源）")

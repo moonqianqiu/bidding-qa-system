@@ -2,6 +2,7 @@
 
 中间格式契约（MinerU→切分→payload.page 的数据契约）：Markdown + 页码标记 `<!-- page:N -->`。
 MinerU 失败/未配置 → pdfplumber 兜底；两者皆败 → 异常（调用方把该文档入「拒收清单」）。
+另有纯文本直入 parse_txt：法规采集产物 cleaned.txt 复用同一契约（NIGHT-019）。
 """
 
 from __future__ import annotations
@@ -109,3 +110,52 @@ def parse_pdf(path: str, api_key: str | None = None) -> dict[str, Any]:
             result["degraded"] = f"mineru_fallback: {exc}"
             return result
     return _pdfplumber_parse(path)
+
+
+# ── 纯文本直入（法规采集产物 cleaned.txt；头部两种变体：横幅行可省）──
+_META_BANNER_RE = re.compile(r"【语料元数据")
+_META_KEY_RE = re.compile(r"^[^\s：:]{1,30}[：:]")  # 「键：值」标注行
+_META_SEP_RE = re.compile(r"^[─━—=_\-]{5,}\s*$")  # 头部分隔线
+_META_MAX_LINES = 32  # 头部行数上限：防退化文件把正文整段吃掉
+
+
+def strip_meta_header(text: str) -> str:
+    """剥离采集头部：从首个标注行到首个分隔线（含）。
+
+    识别规则：首个非空行命中【语料元数据】横幅或「键：值」即进入头部模式，
+    逐行吞掉标注行/空行，遇分隔线连它一起止；无分隔线则在首个非标注行止
+    （不越过正文）。未命中头部特征 → 原样返回。
+    """
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines) or not (_META_BANNER_RE.search(lines[i])
+                               or _META_KEY_RE.match(lines[i])):
+        return text
+    start = i
+    while i < len(lines) and i - start < _META_MAX_LINES:
+        line = lines[i]
+        if _META_SEP_RE.match(line):
+            i += 1
+            break
+        if (_META_BANNER_RE.search(line) or _META_KEY_RE.match(line)
+                or not line.strip()):
+            i += 1
+            continue
+        break  # 非标注行：止步，正文自此处保留
+    return "\n".join(lines[i:]).strip()
+
+
+def parse_txt(path: str) -> dict[str, Any]:
+    """纯文本直入：剥元数据头 → 整篇单页标记（NIGHT-019）。
+
+    页码口径与 MinerU 兜底一致：txt 无真实分页，整档按 page:1 处理；
+    块级切分（第X章/第X条/兜底段落）由 enhance_split.split_text 完成。
+    正文剥空（空文件/仅剩元数据头）→ ValueError（调用方按解析失败拒收）。
+    """
+    with open(path, encoding="utf-8-sig") as f:
+        body = strip_meta_header(f.read())
+    if not body.strip():
+        raise ValueError(f"纯文本无正文（空文件或仅剩元数据头）: {path}")
+    return {"markdown": f"{page_mark(1)}\n{body}", "engine": "txt"}

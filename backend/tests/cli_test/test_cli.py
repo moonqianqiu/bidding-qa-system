@@ -165,6 +165,34 @@ def test_ingest_pdf_rejects_unknown_source_type(capsys):
     assert "新闻" in capsys.readouterr().err  # 锁定 choices 拒绝，而非「子命令不存在」
 
 
+def test_ingest_pdf_txt_suffix_dispatches_parse_txt(monkeypatch, capsys):
+    """txt 后缀直入（NIGHT-019）：parse_txt 接管、parse_pdf 不得被触碰。"""
+    monkeypatch.setattr("bidqa.ingest.pdf_parse.parse_txt",
+                        lambda path: {"markdown": _MD, "engine": "txt"})
+
+    def _boom(path, api_key=None):
+        raise AssertionError("txt 后缀不得走 PDF 解析")
+
+    monkeypatch.setattr("bidqa.ingest.pdf_parse.parse_pdf", _boom)
+    args = ["ingest", "pdf", "--input", "x.txt", "--source-type", "法规",
+            "--title", "74号令", "--dry-run"]
+    assert cli.main(args) == 0
+    out = capsys.readouterr().out
+    assert "engine=txt" in out and "法规" in out
+
+
+def test_ingest_pdf_txt_empty_body_returns_2(monkeypatch, capsys):
+    """txt 正文剥空 → ValueError → 解析失败退出码 2（不写库）。"""
+    def _empty(path):
+        raise ValueError("纯文本无正文")
+
+    monkeypatch.setattr("bidqa.ingest.pdf_parse.parse_txt", _empty)
+    args = ["ingest", "pdf", "--input", "x.txt", "--source-type", "法规",
+            "--title", "t", "--dry-run"]
+    assert cli.main(args) == 2
+    assert "解析失败" in capsys.readouterr().err
+
+
 class _FakeRepoDist:
     def __init__(self, dist):
         self._dist = dist

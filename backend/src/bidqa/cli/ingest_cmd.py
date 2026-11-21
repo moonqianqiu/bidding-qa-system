@@ -56,13 +56,16 @@ def _ingest_pdf(args, settings: Any) -> int:
     from bidqa.database.qdrant import Chunk
     from bidqa.ingest.embed_store import ingest_chunks
     from bidqa.ingest.enhance_split import enhance_blocks, split_markdown, to_ingest_blocks
-    from bidqa.ingest.pdf_parse import parse_pdf
+    from bidqa.ingest.pdf_parse import parse_pdf, parse_txt
     from bidqa.rag.factory import build_embedding
 
     batch_id = args.batch_id or f"pdf-{datetime.now():%Y%m%d-%H%M%S}"
     try:
-        # 未配 MINERU_API_KEY → pdfplumber 本地兜底，零外部调用
-        doc = parse_pdf(args.input, api_key=settings.MINERU_API_KEY or None)
+        if args.input.lower().endswith(".txt"):
+            doc = parse_txt(args.input)  # 纯文本直入（法规采集产物），零外部调用
+        else:
+            # 未配 MINERU_API_KEY → pdfplumber 本地兜底，零外部调用
+            doc = parse_pdf(args.input, api_key=settings.MINERU_API_KEY or None)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"解析失败：{exc}", file=sys.stderr)
         return 2
