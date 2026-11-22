@@ -23,6 +23,12 @@
 # worker 与服务控制台隔离，投递照常可达（AttachConsole 跨控制台实证可用）；
 # 优雅路径与 5031 广播口径不变（NIGHT-013）。--force / --help 语义不变。
 #
+# NIGHT-032（2026-11-22）：start.sh 起 backend 以 CREATE_NEW_PROCESS_GROUP 派生——
+# backend.pid 记录的真实监听 pid 同时就是**进程组 id**，本脚本 grace_ctrl_break 的
+# 「按 pid 定向」自此名副其实（微缩实证：组内送达、同控制台邻接进程零回执）；
+# 旧版 uv 链（无组）下同一投递在本机实证 rc=3 拒发转强停兜底、广播形态下波及
+# 整控制台（NIGHT-028 根因）。旧 pid 文件（非组）仍走原路径：rc=3 → 强停兜底。
+#
 # 用法：bash deploy/stop.sh [--force]
 #   无参数   backend 优雅先行（CTRL_BREAK → 最多 30s 窗口 → 超时/失败强停兜底）
 #   --force  backend 跳过优雅尝试，按旧强停路径直接停（数据服务段不受影响）

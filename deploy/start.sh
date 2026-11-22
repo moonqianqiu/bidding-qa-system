@@ -2,6 +2,9 @@
 # 一键启动（M0-4 基础版）：PostgreSQL → Qdrant → Neo4j → backend(uvicorn workers=1)。
 # 幂等：已在运行的服务自动跳过。首次运行自动从模板创建 backend/.env。
 # 注意：workers=1 是硬性约定（docs/01 §6，进程内状态假定单进程）。
+# NIGHT-032（2026-11-22）：backend 改以 CREATE_NEW_PROCESS_GROUP 派生（监听 pid =
+# 进程组 id，stop.sh 定向投递 CTRL_BREAK 不再退化广播/拒发；见 backend 段注释）。
+# venv 不存在或 pyvenv.cfg 无法解析时回退旧 uv 路径（旧 pid 语义不变）。
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUN="$ROOT/data/run"
@@ -94,10 +97,59 @@ echo "== 4/4 backend =="
 if port_up 8000; then
   echo "  已在运行 (:8000，属主 pid $(port_owner 8000))——要跑新代码先 bash deploy/stop.sh"
 else
-  (cd "$ROOT/backend" && uv run bidqa serve --host 127.0.0.1 --port 8000 > "$RUN/backend.log" 2>&1 &)
+  # NIGHT-032：backend 以 CREATE_NEW_PROCESS_GROUP 派生——让「监听 pid = 进程组 id」。
+  # 旧 uv 链（uv → .venv trampoline → 真实 python）不建进程组，stop.sh 定向投递
+  # CTRL_BREAK 的目标（port_owner 记录的真实监听 pid）不是组 id：本机实证 rc=3 拒发
+  # 转强停兜底；真控制台广播形态下还会整控制台波及 PG/Qdrant/Neo4j（NIGHT-028 根因）。
+  # 新路径直接派生**基础解释器**（pyvenv.cfg home）+ __PYVENV_LAUNCHER__ 指向 venv
+  # python（CPython 据此把 sys.executable/prefix 定位到 venv，与 trampoline 等效且
+  # 无中间进程）→ Popen.pid == 真实监听 pid == 进程组 id，backend.pid 口径不变，
+  # stop.sh 投递段无需改动即天然定向。代价：跳过 uv 的依赖同步——首次建环境或
+  # uv.lock 变更后请先 `cd backend && uv sync`（venv 不存在时自动走下方旧路径）。
+  VENV_PY="$ROOT/backend/.venv/Scripts/python.exe"
+  [ -f "$VENV_PY" ] || VENV_PY="$ROOT/backend/.venv/bin/python"
+  BASE_PY=""
+  PYVENV_CFG="$ROOT/backend/.venv/pyvenv.cfg"
+  if [ -f "$VENV_PY" ] && [ -f "$PYVENV_CFG" ]; then
+    _home=$(sed -n 's/^home[[:space:]]*=[[:space:]]*//p' "$PYVENV_CFG" | tr -d '\r' | head -n 1)
+    [ -n "$_home" ] && [ -f "$_home/python.exe" ] && BASE_PY="$_home/python.exe"
+    [ -z "$BASE_PY" ] && [ -n "$_home" ] && [ -f "$_home/bin/python" ] && BASE_PY="$_home/bin/python"
+  fi
+  SPAWNED=0
+  if [ -n "$BASE_PY" ]; then
+    : > "$RUN/backend.log"
+    # helper 侧全部是 Windows 进程语义（Popen/CreateProcess）：MSYS 路径必须先转 Windows 形式
+    BASE_PYW=$(cygpath -w "$BASE_PY")
+    VENV_PYW=$(cygpath -w "$VENV_PY")
+    CWDW=$(cygpath -w "$ROOT/backend")
+    LOGW=$(cygpath -w "$RUN/backend.log")
+    if "$VENV_PY" -c 'import os, subprocess, sys
+base, venv_py, cwd, log, port = sys.argv[1:6]
+env = dict(os.environ)
+env["__PYVENV_LAUNCHER__"] = venv_py   # 与 uv trampoline 等效：基础解释器直启 venv（无中间进程）
+try:
+    fh = open(log, "ab", buffering=0)
+    subprocess.Popen(
+        [base, "-c",
+         "import sys; from bidqa.cli.main import main; sys.exit(main())",
+         "serve", "--host", "127.0.0.1", "--port", port],
+        cwd=cwd, stdin=subprocess.DEVNULL, stdout=fh, stderr=subprocess.STDOUT,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP, env=env)
+except OSError as exc:
+    sys.stderr.write("spawn failed: %s\n" % exc)
+    sys.exit(1)
+' "$BASE_PYW" "$VENV_PYW" "$CWDW" "$LOGW" "8000"; then
+      SPAWNED=1
+    else
+      echo "  警告：组派生失败，回退旧 uv 路径"
+    fi
+  fi
+  if [ "$SPAWNED" -eq 0 ]; then
+    (cd "$ROOT/backend" && uv run bidqa serve --host 127.0.0.1 --port 8000 > "$RUN/backend.log" 2>&1 &)
+  fi
   if wait_port 8000 backend 60; then
-    port_owner 8000 > "$RUN/backend.pid"   # 真实监听者=python 子进程（winpid）；旧 $! 是 uv 包装，曾致「改了代码没效果」
-    echo "  后端就绪，监听 pid $(cat "$RUN/backend.pid") 已记录"
+    port_owner 8000 > "$RUN/backend.pid"   # 真实监听者=python 子进程（winpid）；NIGHT-032 后即进程组 id
+    echo "  后端就绪，监听 pid $(cat "$RUN/backend.pid") 已记录（= 进程组 id，NIGHT-032）"
   else
     echo "  错误：backend 未就绪，日志见 data/run/backend.log"
     exit 1
