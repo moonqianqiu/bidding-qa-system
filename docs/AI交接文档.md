@@ -2,21 +2,21 @@
 
 > **给接手的 AI 助手 / 未来会话**：项目现在什么状态、还差什么、怎么验证。
 > 分工：规则与红线在 `AGENTS.md`；命令与排障在 `docs/部署手册.md`；图解走读在 `docs/04`；设计细节在 `docs/01-03`。
-> 本文只放**易变的状态**：现状快照、未完成清单、环境速览、检查清单。更新：2026-11-22（v2.5 定版前同步：P1-8 广播可达性修复+停机演练复验、ag-010 误澄清修复、OTel OTLP 实接实证、图谱 34,800 边逐项对账；Agent 能力批 A/B 已跑；**语料 10 法规+23 FAQ 已入库（718 块，Qdrant 793）**、ingest .txt 直入 c7e0590；白班轮 NIGHT-026/027/028/030/031/036：corpus_note 改运行时点数、快照命名加 golden 段、rag_law_v1 法规金集+BM25 零付费基线、faq_excel 可选 URL 列、stop.sh 双进程架构，测试 733；2026-11-22 夜轮 NIGHT-046/050/051：FAQ 检索金集 rag_faq_v2、语料去重 793→792（删重复 FAQ 点 81152374）、混合口径三集重跑全 1.0，测试 766）。
+> 本文只放**易变的状态**：现状快照、未完成清单、环境速览、检查清单。更新：2026-11-22（v2.5 定版前同步：P1-8 广播可达性修复+停机演练复验、ag-010 误澄清修复、OTel OTLP 实接实证、图谱 34,800 边逐项对账；Agent 能力批 A/B 已跑；**语料 10 法规+23 FAQ 已入库（718 块，Qdrant 793）**、ingest .txt 直入 c7e0590；白班轮 NIGHT-026/027/028/030/031/036：corpus_note 改运行时点数、快照命名加 golden 段、rag_law_v1 法规金集+BM25 零付费基线、faq_excel 可选 URL 列、stop.sh 双进程架构，测试 733；2026-11-22 夜轮 NIGHT-046/050/051：FAQ 检索金集 rag_faq_v2、语料去重 793→792（删重复 FAQ 点 81152374）、混合口径三集重跑全 1.0，测试 766；NIGHT-054：agent/rag 快照 env 补记 collection（与 retrieval 同走 env_collection 单入口），测试 769）。
 
 ## 1. 一分钟上手（下一任先做这四件事）
 
 1. 读 `AGENTS.md`（硬约束 10 条 + 预算红线）→ `docs/04` §6（一次提问的代码级走读，路径已对齐 v2.0 结构）
 2. 结构速览：`docs/01` §1 分层树——**api=HTTP 适配壳、application=业务用例、工厂在各包 factory.py、组合根只有 container.build_agent_stack**；分层边界由 `tests/test_layering.py` AST 钉死（违规即红）
 3. 拉起服务：`bash deploy/start.sh` → **立刻** `curl 127.0.0.1:8000/api/health` 六组件全 `ok`
-4. 跑验证三连：`cd backend && uv run pytest -q`（766 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
+4. 跑验证三连：`cd backend && uv run pytest -q`（769 例）/ `cd frontend && npm run build` / `bash deploy/e2e-chat.sh`（真实调用主模型，先看 §3 成本口径）
 
 ## 2. 质量现状（快照，接手时按 §6 复核）
 
 | 项 | 状态 | 复核命令 |
 |---|---|---|
 | 标签 | `v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` → `v2.3-dual-vision` → `v2.4-audit-repair` → **`v2.5`（2026-11-21 定版，用户已批准）** | `git tag -l && git log --oneline -12` |
-| 后端测试 | **766 passed 全绿（含 Neo4j/PG 集成，服务需在线；2026-11-21 实跑：675→680 为 ag-010 修复 +5 契约例、680→682 为 P1-8 uvicorn+TCP SSE 回归 +2、682→706 为 NIGHT-008 level +17 与 NIGHT-014 退出码 +7、706→717 为 ingest .txt 直入 +11，语料入库轮收在 719；2026-11-22 白班轮 719→733 为 +14：corpus_note 注记 3、FAQ URL 列 5、dry-run url= 2、快照命名 golden 段 4——NIGHT-039 全量实跑复核；2026-11-22 晚轮 733→747 为 NIGHT-042 烘焙/集合回归 +14、747→755 为 NIGHT-045 口径与 sparse 告警 +8；2026-11-22 夜轮 755→760 为 NIGHT-046 +5、760→766 为 NIGHT-050 语料去重 +6——当前工作区实跑复核）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
+| 后端测试 | **769 passed 全绿（含 Neo4j/PG 集成，服务需在线；2026-11-21 实跑：675→680 为 ag-010 修复 +5 契约例、680→682 为 P1-8 uvicorn+TCP SSE 回归 +2、682→706 为 NIGHT-008 level +17 与 NIGHT-014 退出码 +7、706→717 为 ingest .txt 直入 +11，语料入库轮收在 719；2026-11-22 白班轮 719→733 为 +14：corpus_note 注记 3、FAQ URL 列 5、dry-run url= 2、快照命名 golden 段 4——NIGHT-039 全量实跑复核；2026-11-22 晚轮 733→747 为 NIGHT-042 烘焙/集合回归 +14、747→755 为 NIGHT-045 口径与 sparse 告警 +8；2026-11-22 夜轮 755→760 为 NIGHT-046 +5、760→766 为 NIGHT-050 语料去重 +6——当前工作区实跑复核；766→769 为 NIGHT-054 快照 env 补 collection +3（agent 1 + rag 2）——769 经 collect-only 复核计数（NIGHT-055），全绿口径出自 NIGHT-054 提交 57c803e）**；测试目录=源码目录一条规则 | `cd backend && uv run pytest -q` |
 | 分层守卫 | `tests/test_layering.py` **R1-R11** 全部空集（永久护栏）+ 每条规则「能红」自检 | `pytest tests/test_layering.py -q` |
 | 类型检查 | pyrefly **49 条存量冻结基线（pyrefly-baseline.json），0 new**（bad-override ×5 + missing-attribute ×3 已清零，余为 psycopg 行类型噪音；2026-11-21 复核 0 new） | `uv run --with pyrefly pyrefly check src` |
 | 前端类型 | 绿（**Vite + React 19 + Tailwind 4**，`react-router-dom` 五路由；`npm run build` 通过；2026-11-21 typecheck+build 绿，主 chunk 501.62 kB 体积警告已登记 backlog，非门禁） | `cd frontend && npm run build` |
@@ -81,7 +81,7 @@
 
 - [ ] `git status` 干净；`git log --oneline -12` 覆盖审计修复 WP0-WP4 轮次（每轮独立 commit）
 - [ ] `bash deploy/start.sh` 后 `/api/health` 六组件全 ok
-- [ ] `cd backend && uv run pytest -q` → 766 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
+- [ ] `cd backend && uv run pytest -q` → 769 passed（服务在线；离线时 Neo4j/PG 集成 skip 属预期并如实记录）
 - [ ] `cd frontend && npm run build` 绿（五路由预渲染）
 - [ ] `bash deploy/e2e-chat.sh --mutation-check` PASS（免费）；真跑三走向属付费动作（跑前告知用户）
 - [ ] `pytest tests/test_layering.py` 3 passed（分层守卫全绿；allowlist 应全空集）
