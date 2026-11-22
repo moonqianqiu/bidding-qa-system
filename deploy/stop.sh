@@ -29,6 +29,18 @@
 # 旧版 uv 链（无组）下同一投递在本机实证 rc=3 拒发转强停兜底、广播形态下波及
 # 整控制台（NIGHT-028 根因）。旧 pid 文件（非组）仍走原路径：rc=3 → 强停兜底。
 #
+# NIGHT-057（2026-11-22）：可观测性三补——
+#   ① grace 文案如实化：grace_ctrl_break 的 rc124（timeout 10 杀掉未返回的 PowerShell）
+#      不再与 rc2/rc3 同按「投递失败」——PTY 实测 rc124 后 backend 实际收到信号并四步
+#      优雅退出（事件已生成、仅 PowerShell 未返回）。现 rc0/rc124 同走存活轮询判定
+#      （rc124 提示「投递超时，事件可能已送达」）；rc2/rc3/其余（AttachConsole/生成
+#      失败）才报「不可投递」转强停兜底。5031 广播口径不变。
+#   ② worker 异死分支测试开关：ZCODE_TEST_WORKER_CRASH=1 时 worker 打印 WORKER-PID 后
+#      立即退出（不执行任何停机动作、不写 STOP-DONE），供一条命令验证 waiter 的
+#      「worker 已退出但无 STOP-DONE → 提前返回 1」分支；默认关闭，行为完全不变。
+#   ③ stop-<ts>.log 保留策略：只保留最近 STOP_LOG_KEEP 份（默认 20，同名环境变量可
+#      覆盖），随运行清理更旧日志（含对应 .spawn.err），防堆积。
+#
 # 用法：bash deploy/stop.sh [--force]
 #   无参数   backend 优雅先行（CTRL_BREAK → 最多 30s 窗口 → 超时/失败强停兜底）
 #   --force  backend 跳过优雅尝试，按旧强停路径直接停（数据服务段不受影响）
@@ -40,6 +52,7 @@ GRACE_TIMEOUT_S=30   # 优雅窗口：uvicorn timeout_graceful_shutdown=10 的 S
                      # 极端长尾（停机③在途 futures 排空上限 30s）由兜底强停收尾——5031 广播
                      # 在 BidqaServer.shutdown() 入口已发出，不受兜底时机影响。
 WAIT_BOUND_S=240     # 壳进程 waiter 对 worker 的跟踪上限（各段硬超时合计的上界）。
+STOP_LOG_KEEP="${STOP_LOG_KEEP:-20}"  # stop-<ts>.log 保留份数（最近 N 份含本次；同名环境变量可覆盖，NIGHT-057）
 FORCE_STOP=0
 
 usage() {
@@ -52,6 +65,10 @@ usage() {
            全程日志见 data/run/stop-<时间戳>.log。
   --force  backend 跳过优雅尝试，直接按旧强停路径停止；数据服务段不受影响。
   --help   显示本说明。
+  测试开关（默认关闭）：ZCODE_TEST_WORKER_CRASH=1 使 worker 打印 WORKER-PID 后立即退出
+           （不执行任何停机动作），用于一条命令验证 waiter 的「worker 已退出但无
+           STOP-DONE → 提前返回 1」分支；预期退出码 1 且服务不受影响（NIGHT-057）。
+  日志保留：stop-<时间戳>.log 只保留最近 STOP_LOG_KEEP 份（默认 20，同名环境变量可覆盖）。
 USAGEEOF
 }
 
@@ -83,9 +100,12 @@ msg() { /usr/bin/printf '%s\n' "$*"; }
 # 以「目标 pid = 进程组 id」定向生成 CTRL_BREAK——仅在目标确为进程组首进程时组内送达；
 # 目标非进程组 id 时本环境实证为整控制台广播（NIGHT-028），故投递方必须运行在与服务
 # 控制台隔离的 worker 中（见文件头）。rc0=事件已生成（是否生效由后续存活轮询观察）；
-# rc2=AttachConsole 失败（目标无控制台/已退出）；rc3=生成失败（目标非进程组首进程或
-# 环境拦截）；rc124=死锁防御超时（NIGHT-002 第 3 轮实测过同步 Generate 死锁形态）。
-# 任何非 0 均按「投递失败」处理 → 调用方转强停兜底。
+# rc124=死锁防御超时——PowerShell 10s 未返回，但事件可能已生成（NIGHT-002 第 3 轮实测
+# 过同步 Generate 死锁形态；NIGHT-057 PTY 复测：rc124 后 backend 实际收到信号并四步
+# 优雅退出），按「可能已送达」处理、与 rc0 同走存活轮询判定；rc2=AttachConsole 失败
+# （目标无控制台/已退出）；rc3=生成失败（目标非进程组首进程或环境拦截）；其余=投递
+# 环境异常。仅 rc2/rc3/其余按「投递失败」处理 → 调用方转强停兜底（NIGHT-057 起 rc124
+# 不再误判为投递失败）。
 grace_ctrl_break() { # $1 = 目标 winpid
   local target="$1" ps enc
   ps=$(cat <<'PSEOF'
@@ -163,7 +183,8 @@ stop_pid_file() { # pidfile 名称 端口
 
 stop_backend() { # backend 专属（NIGHT-013）：优雅先行 → 超时强停兜底。
   # pid 解析/属主校验口径与 stop_pid_file 一致；--force 时直接委托 stop_pid_file（旧行为原样）。
-  local f="$RUN/backend.pid" pid wp
+  # rc0/rc124 同走存活轮询（rc124=事件可能已送达，NIGHT-057）；rc2/rc3/其余才转强停兜底。
+  local f="$RUN/backend.pid" pid wp grace_rc=0
   if [ ! -f "$f" ]; then msg "backend: 无 pid 文件（可能未由 start.sh 启动）"; return; fi
   pid=$(tr -dc '0-9' < "$f" 2>/dev/null)
   rm -f "$f"
@@ -178,7 +199,18 @@ stop_backend() { # backend 专属（NIGHT-013）：优雅先行 → 超时强停
     msg "backend: pid $pid 存活但未持有 :8000（陈旧记录，不误杀；见残留检测）"; return
   fi
   if grace_ctrl_break "$pid"; then
-    msg "backend: 已定向投递 CTRL_BREAK (winpid $pid，属主校验通过)——等待优雅停机（上限 ${GRACE_TIMEOUT_S}s；广播入口 BidqaServer.shutdown → SSE 5031）"
+    grace_rc=0
+  else
+    grace_rc=$?
+  fi
+  if [ "$grace_rc" -eq 0 ] || [ "$grace_rc" -eq 124 ]; then
+    if [ "$grace_rc" -eq 124 ]; then
+      # NIGHT-057：rc124=PowerShell 未在 10s 内返回（事件可能已生成），不能按投递失败
+      # 处理——与 rc0 同走存活轮询，由 backend 是否退出判定是否优雅完成。
+      msg "backend: CTRL_BREAK 投递超时 (rc=124，PowerShell 未返回；事件可能已送达)——继续按存活轮询判定优雅停机（上限 ${GRACE_TIMEOUT_S}s）"
+    else
+      msg "backend: 已定向投递 CTRL_BREAK (winpid $pid，属主校验通过)——等待优雅停机（上限 ${GRACE_TIMEOUT_S}s；广播入口 BidqaServer.shutdown → SSE 5031）"
+    fi
     for _ in $(seq 1 "$GRACE_TIMEOUT_S"); do
       if ! win_alive "$pid" || ! port_up 8000; then
         msg "backend: 已优雅停止 (winpid $pid)——SSE 5031 广播已在停机入口发出"
@@ -188,7 +220,7 @@ stop_backend() { # backend 专属（NIGHT-013）：优雅先行 → 超时强停
     done
     msg "backend: 优雅窗口 ${GRACE_TIMEOUT_S}s 超时（事件未生效），转强停兜底"
   else
-    msg "backend: CTRL_BREAK 不可投递（本环境限制；Git Bash PTY 下属预期），转强停兜底"
+    msg "backend: CTRL_BREAK 不可投递 (rc=$grace_rc，AttachConsole 失败或生成被拒；本环境限制下属预期)，转强停兜底"
   fi
   force_stop_pid "$pid"
 }
@@ -247,8 +279,28 @@ run_inner() {
   [ "$leftover" -eq 0 ] && msg "  无残留，端口已全部释放"
 }
 
+# stop-<ts>.log 保留策略（NIGHT-057）：只保留最近 STOP_LOG_KEEP 份（含本次运行），
+# 清理更旧日志及对应 .spawn.err——时间戳命名，字典序即时序。非法/0 值保守跳过不动手。
+prune_stop_logs() {
+  local f base n=0
+  case "$STOP_LOG_KEEP" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$STOP_LOG_KEEP" -ge 1 ] || return 0
+  for f in $(ls -1 "$RUN"/stop-*.log 2>/dev/null | sort | head -n -"$STOP_LOG_KEEP"); do
+    base="${f%.log}"
+    if rm -f "$f" "$base.spawn.err"; then n=$((n + 1)); fi
+  done
+  [ "$n" -gt 0 ] && msg "日志保留策略：已清理 $n 份旧停机日志（保留最近 ${STOP_LOG_KEEP} 份，NIGHT-057）"
+  return 0
+}
+
 if [ "$INNER" -eq 1 ]; then
   msg "WORKER-PID $(winpid_of "$$")"   # waiter 据此检测 worker 是否已消失（提前返回，不死等）
+  if [ "${ZCODE_TEST_WORKER_CRASH:-0}" = "1" ]; then
+    # NIGHT-057 测试开关（默认关闭）：模拟 worker 异死——不执行任何停机动作、不写
+    # STOP-DONE，供一条命令验证 waiter 的「worker 已退出但无 STOP-DONE → 提前返回 1」。
+    msg "TEST-MODE：ZCODE_TEST_WORKER_CRASH=1——worker 立即异常退出（未停任何服务，无完成标记）"
+    exit 3
+  fi
   run_inner
   msg "STOP-DONE rc=0"
   exit 0
@@ -264,6 +316,11 @@ LOG="$RUN/stop-$_ts.log"
 ERRW="$RUN/stop-$_ts.spawn.err"
 LOGW=$(cygpath -w "$LOG" 2>/dev/null || echo "$LOG")
 : > "$LOG"
+prune_stop_logs   # 只保留最近 STOP_LOG_KEEP 份 stop-<ts>.log（含本次；NIGHT-057）
+
+if [ "${ZCODE_TEST_WORKER_CRASH:-0}" = "1" ]; then
+  echo "测试开关 ZCODE_TEST_WORKER_CRASH=1：worker 将在启动后立即退出（不执行任何停机动作）——验证 waiter 的 worker 异死提前返回分支（NIGHT-057）"
+fi
 
 PY=""
 for _c in "$ROOT/backend/.venv/Scripts/python.exe" "$ROOT/backend/.venv/bin/python"; do
@@ -308,7 +365,7 @@ while time.time() < end:
         sys.stdout.write(c)
         sys.stdout.flush()
         buf += c
-        if "STOP-DONE" in buf:
+        if "STOP-DONE rc=" in buf:  # 完成标记固定带 rc= 段（worker 唯一发射点），防日志散文误判（NIGHT-057）
             seen = True
             break
         if wpid is None and "WORKER-PID" in buf:
