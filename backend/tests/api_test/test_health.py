@@ -59,7 +59,9 @@ def test_health_capabilities_chat_matches_configuration(settings_factory, monkey
     assert client.get("/api/health").json()["capabilities"]["chat"] is True  # CORE_ENV 三件套齐
 
     from bidqa.config import Settings
-    client2 = TestClient(create_app(Settings(_env_file=None)))
+    # 显式清空三件套：pydantic-settings 仍会读环境变量，CI 注入 dummy 时 _env_file=None 不足以表达「什么都没配」
+    blank = Settings(_env_file=None, CHAT_BASE_URL="", CHAT_API_KEY="", CHAT_MODEL="")
+    client2 = TestClient(create_app(blank))
     assert client2.get("/api/health").json()["capabilities"]["chat"] is False  # 什么都没配
 
 
