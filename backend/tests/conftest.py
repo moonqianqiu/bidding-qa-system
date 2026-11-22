@@ -15,14 +15,26 @@ from bidqa.config import Settings, get_settings
 
 
 @pytest.fixture(autouse=True)
-def _isolate_core_env(monkeypatch):
+def _isolate_core_env():
     """测试级隔离核心环境变量：CI 为「导入 bidqa.main 时通过 validate_core」注入
     CHAT_*/QDRANT_URL 占位值；这些值在测试运行期会把 `Settings(_env_file=None)`
-    从「未配置」变成「已配置」，污染配置/健康/Has_chat 等用例（2026-11-22 CI 实锤：
+    从「未配置」变成「已配置」，污染配置/健康/has_chat 等用例（2026-11-22 CI 实锤：
     doctor 误判 OK、serve 用例真的起服务被超时）。运行期一律清空，与本地开发同语义。
+
+    注意：这里**不用 monkeypatch**——它会把 monkeypatch 的 teardown 推迟到
+    `_reset_caches` 之后，导致「被用例替换过的 db_factory.build_repo 在清缓存时
+    还没有恢复」而报 AttributeError（2026-11-22 本地实锤）。
     """
-    for name in ("CHAT_BASE_URL", "CHAT_API_KEY", "CHAT_MODEL", "QDRANT_URL"):
-        monkeypatch.delenv(name, raising=False)
+    names = ("CHAT_BASE_URL", "CHAT_API_KEY", "CHAT_MODEL", "QDRANT_URL")
+    saved = {name: os.environ.get(name) for name in names}
+    for name in names:
+        os.environ.pop(name, None)
+    yield
+    for name, value in saved.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 _TEMP_ENV_ORDER = ("TMPDIR", "TEMP", "TMP")
