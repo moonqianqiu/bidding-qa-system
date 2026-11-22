@@ -142,6 +142,31 @@ def test_ingest_pdf_dry_run_does_not_write(monkeypatch, capsys):
     assert calls == {"repo": 0, "embedding": 0}  # 写库与模型路径全程打桩
 
 
+def test_ingest_pdf_dry_run_prints_url(monkeypatch, capsys):
+    """dry-run 抽样行带 --url 来源链接（NIGHT-035，与 knowledge 口径对齐）；
+    fake parse_pdf + repo/embedding 全程打桩，零外部服务、零落盘。"""
+    monkeypatch.setattr("bidqa.ingest.pdf_parse.parse_pdf", _fake_parse_pdf)
+    calls = _no_write_deps(monkeypatch)
+    assert cli.main(_pdf_args("--url", "https://example.com/pdf-a", "--dry-run")) == 0
+    out = capsys.readouterr().out
+    assert "dry-run 抽样 5 条" in out and "未写库" in out
+    assert "url=https://example.com/pdf-a" in out  # 抽样行带 url（NIGHT-035 验收 1）
+    assert "page=" in out and "ref=" in out and "text=" in out  # 既有字段不受影响
+    assert calls == {"repo": 0, "embedding": 0}  # 写库与模型路径全程打桩
+
+
+def test_ingest_pdf_dry_run_empty_url_shown_not_omitted(monkeypatch, capsys):
+    """未传 --url（默认空）：固定格式下 url= 段显示为空、不省略——与 knowledge
+    口径一致，人审可区分「该行无 url」与「打印逻辑漏字段」。"""
+    monkeypatch.setattr("bidqa.ingest.pdf_parse.parse_pdf", _fake_parse_pdf)
+    _no_write_deps(monkeypatch)
+    assert cli.main(_pdf_args("--dry-run")) == 0
+    sample = [ln for ln in capsys.readouterr().out.splitlines()
+              if ln.strip().startswith("[法规]")]
+    assert len(sample) >= 1  # fake markdown 至少出一个抽样块
+    assert all(ln.rstrip().endswith("url=") for ln in sample)  # 空 url 显式显示为空
+
+
 def test_ingest_pdf_writes_non_faq_source_type(monkeypatch):
     from bidqa.database.qdrant import QdrantRepo
 
@@ -191,6 +216,67 @@ def test_ingest_pdf_txt_empty_body_returns_2(monkeypatch, capsys):
             "--title", "t", "--dry-run"]
     assert cli.main(args) == 2
     assert "解析失败" in capsys.readouterr().err
+
+
+# ── ingest knowledge：dry-run 抽样带 url（NIGHT-030，付费嵌入前人工核验来源映射）──
+def _knowledge_args(x, *extra):
+    return ["ingest", "knowledge", "--input", str(x), *extra]
+
+
+def _no_write_deps(monkeypatch) -> dict:
+    """dry-run 全程打桩：建 repo / 建 embedding 一旦被触碰即失败，返回触碰计数。"""
+    calls = {"repo": 0, "embedding": 0}
+
+    def no_repo():
+        calls["repo"] += 1
+        raise AssertionError("dry-run 不应建 repo")
+
+    monkeypatch.setattr("bidqa.database.factory.build_repo", no_repo)
+    monkeypatch.setattr("bidqa.rag.factory.build_embedding",
+                        lambda: calls.__setitem__("embedding", 1))
+    return calls
+
+
+def test_ingest_knowledge_dry_run_prints_url(tmp_path, monkeypatch, capsys):
+    """真 loader + tmp xlsx（零外部服务）：抽样行含来源 url，字段与原格式共存。"""
+    import openpyxl
+
+    x = tmp_path / "faq.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["问", "答", "来源URL"])
+    ws.append(["单一来源可以联合体吗？", "一般不可以。", "https://example.com/a"])
+    wb.save(x)
+
+    calls = _no_write_deps(monkeypatch)
+    assert cli.main(_knowledge_args(x, "--dry-run")) == 0
+    out = capsys.readouterr().out
+    assert "dry-run 抽样 5 条" in out and "未写库" in out
+    assert "url=https://example.com/a" in out  # 抽样行带 url（NIGHT-030 验收 1）
+    assert "id=" in out and "text=" in out  # 既有字段不受影响
+    assert calls == {"repo": 0, "embedding": 0}  # 写库与模型路径全程打桩
+
+
+def test_ingest_knowledge_dry_run_empty_url_shown_not_omitted(monkeypatch, tmp_path,
+                                                               capsys):
+    """空 url（无 URL 列/值非法）：固定格式下 url= 段显示为空、不省略——口径一致，
+    人审可区分「该行无 url」与「打印逻辑漏字段」；fake loader 注入不碰 xlsx 解析。"""
+    from bidqa.database.qdrant import Chunk
+
+    fake = [
+        Chunk(source_type="FAQ", title="Q1", text="A1", ctx_summary="Q1",
+              batch_id="b1", url=""),
+        Chunk(source_type="FAQ", title="Q2", text="A2", ctx_summary="Q2",
+              batch_id="b1", url="https://example.com/b"),
+    ]
+    monkeypatch.setattr("bidqa.ingest.faq_excel.load_faq_chunks",
+                        lambda path, batch_id: (fake, []))
+    assert cli.main(_knowledge_args(tmp_path / "no-such.xlsx", "--dry-run")) == 0
+    out = capsys.readouterr().out
+    assert "url=https://example.com/b" in out
+    sample = [ln for ln in out.splitlines() if ln.strip().startswith("[FAQ]")]
+    assert len(sample) == 2
+    assert sample[0].rstrip().endswith("url=")  # 空 url 显式显示为空（验收 1 口径）
 
 
 class _FakeRepoDist:
@@ -375,18 +461,24 @@ def _retrieval_report(avg_recall, cases):
 
 
 def test_eval_cli_accepts_retrieval_mode(monkeypatch, tmp_path, capsys):
-    """WP6：--mode retrieval 接线；env 由 build_retrieval_env 组装（指纹脱敏+语料注记）。"""
+    """WP6：--mode retrieval 接线；env 由 build_retrieval_env 组装（指纹脱敏+语料注记）。
+
+    NIGHT-026：语料注记随运行时真实点数——CLI 读 Qdrant count（此处打桩 793）
+    并注入 run_retrieval_eval / build_retrieval_env，注记如实含 793。
+    """
     captured: dict = {}
     report = _retrieval_report(
         0.5, [{"id": "rag_flow_001", "question": "q", "measured": True, "hits": 5,
                "metrics": {"recall@5": 0.5, "recall@10": 0.5, "ndcg@5": 0.4,
                            "ndcg@10": 0.4, "mrr": 1.0}}])
 
-    def fake_run(golden, retriever, ks=(5, 10), env=None):
+    def fake_run(golden, retriever, ks=(5, 10), env=None, corpus_count=None):
         captured["golden"] = golden
         captured["env"] = env
+        captured["corpus_count"] = corpus_count
         return report
 
+    monkeypatch.setattr("bidqa.cli.eval_cmd._qdrant_point_count", lambda: 793)
     monkeypatch.setattr("bidqa.database.factory.build_repo", lambda: object())
     monkeypatch.setattr("bidqa.rag.factory.build_retriever", lambda: object())
     monkeypatch.setattr("bidqa.eval.retrieval_eval.run_retrieval_eval", fake_run)
@@ -397,8 +489,10 @@ def test_eval_cli_accepts_retrieval_mode(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "metrics_avg" in out and "快照" in out and "recall@5=0.5" in out
     assert captured["golden"] == str(tmp_path / "g.jsonl")
-    # env 组装在位：语料注记 + 指纹槽（retrieval 模式无 chat/judge 调用，仅留档）
-    assert captured["env"]["note"] and "75" in captured["env"]["note"]
+    assert captured["corpus_count"] == 793  # 真实点数透传两个注记出口
+    # env 组装在位：语料注记（随真实点数）+ 指纹槽（无 chat/judge 调用，仅留档）
+    assert captured["env"]["note"] and "793" in captured["env"]["note"]
+    assert "75" not in captured["env"]["note"]  # 不回落硬编码旧值
     assert {"link", "chat", "embedding"} <= set(captured["env"])
 
 
@@ -409,6 +503,7 @@ def test_eval_cli_retrieval_all_none_is_not_measured(monkeypatch, tmp_path, caps
                                           "ndcg@5": None, "ndcg@10": None, "mrr": None}},
               "cases": [{"id": "c1", "question": "q", "measured": False,
                          "metrics": {"recall@5": None}}]}
+    monkeypatch.setattr("bidqa.cli.eval_cmd._qdrant_point_count", lambda: None)
     monkeypatch.setattr("bidqa.database.factory.build_repo", lambda: object())
     monkeypatch.setattr("bidqa.rag.factory.build_retriever", lambda: object())
     monkeypatch.setattr("bidqa.eval.retrieval_eval.run_retrieval_eval",

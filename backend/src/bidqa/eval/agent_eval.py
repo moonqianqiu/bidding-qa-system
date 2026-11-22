@@ -5,7 +5,9 @@ WP5c：Plan/Reflection 纳入口径——summary 增 plan_rate（plan_steps 非�
 观测指标无门禁）/reflected_count（reflected=true 用例数）；cases 逐例落
 plan_steps/reflected（异常用例恒 []/False，消费方免判键）；env.agent_flags
 记录 A/B 开关（plan_enabled/reflect_enabled 透传 AgentLoop.run，默认 False=基线）。
-快照 §4.4：原子写 + 命名 {kind}_{YYYYMMDD}_{git短hash}_{judge}.json；env.link="internal"。
+快照 §4.4：原子写 + 命名 {kind}_{YYYYMMDD}_{golden}_{git短hash}_{judge}.json
+（NIGHT-036：加 golden 段——同日同模式两份金集不互踩；golden 不可得退回旧四段名，
+旧快照仍可读）；env.link="internal"。
 chat 由调用方注入（真实模型或 fake 脚本），评测代码不感知厂商。
 """
 
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -40,11 +43,37 @@ def judge_model_name(settings: Any) -> str:
     return (settings.JUDGE_MODEL or "nojudge").replace("/", "_")
 
 
-def snapshot_path(kind: str, judge: str) -> Path:
-    """命名规范（docs/01 §4.4）：{kind}_{YYYYMMDD}_{git短hash}_{判分模型}.json"""
+def golden_slug(golden_path: str | Path | None) -> str:
+    """黄金集名段（快照命名单一收口，NIGHT-036）：文件主名折为文件名安全段。
+
+    只替换文件系统/命令行不安全字符（空白、Windows 保留符、控制符）为 _，
+    小写归一（Windows 大小写不敏感——不归一会重新引入同日互踩），其余（含中文
+    金集名）原样保留；截 40 字符；不可得（None/空/折完为空）返回空串——调用方
+    退回旧四段命名。
+    """
+    if not golden_path:
+        return ""
+    stem = Path(golden_path).stem.strip()
+    slug = re.sub(r"[\s\x00-\x1f:*?\"<>|]", "_", stem.lower()).strip("._-")
+    return slug[:40]
+
+
+def snapshot_path(kind: str, judge: str, golden: str | Path | None = None) -> Path:
+    """命名规范（docs/01 §4.4）：{kind}_{YYYYMMDD}_{golden}_{git短hash}_{判分模型}.json。
+
+    NIGHT-036：golden 段=金集文件主名（golden_slug 归一）——同日同模式两份金集
+    各产出独立文件（2026-11-22 实测 rag_v0 快照曾被 rag_law_v1 覆盖）；golden
+    不可得时退回旧四段名 {kind}_{YYYYMMDD}_{git}_{judge}.json，旧快照仍可读
+    （消费方按 *.json glob + mtime，不依赖段数）。
+    """
     import datetime
     date_str = datetime.datetime.now().strftime("%Y%m%d")
-    return RESULTS_DIR / f"{kind}_{date_str}_{git_short_hash()}_{judge}.json"
+    parts = [kind, date_str]
+    slug = golden_slug(golden)
+    if slug:
+        parts.append(slug)
+    parts += [git_short_hash(), judge]
+    return RESULTS_DIR / ("_".join(parts) + ".json")
 
 
 def atomic_write_json(path: Path, payload: dict) -> None:
@@ -147,9 +176,9 @@ def run_agent_eval(golden_path: str, loop_factory: Any, settings: Any, *,
                 {"id": r["id"], "question": r["question"]} for r in results if not r["pass"]]}
 
 
-def write_snapshot(report: dict, settings: Any) -> Path:
+def write_snapshot(report: dict, settings: Any, *, golden: str | Path | None = None) -> Path:
     from bidqa.eval.ragas import rolling_retention
-    path = snapshot_path(report["kind"], judge_model_name(settings))
+    path = snapshot_path(report["kind"], judge_model_name(settings), golden)
     atomic_write_json(path, report)
     rolling_retention()  # agent 快照同样滚动保留（P1-18：原只在 rag 快照路径调用）
     return path

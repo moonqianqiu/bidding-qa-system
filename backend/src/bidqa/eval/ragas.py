@@ -147,9 +147,11 @@ def run_rag_eval(golden_path: str, retriever: Retriever, chat: ChatClient,
     return report
 
 
-def write_rag_snapshot(report: dict, settings: Any) -> Path:
+def write_rag_snapshot(report: dict, settings: Any, *,
+                       golden: str | Path | None = None) -> Path:
+    """golden 透传 snapshot_path（NIGHT-036：同日两金集独立文件，rag_v0 曾被覆盖）。"""
     from bidqa.eval.agent_eval import snapshot_path
-    path = snapshot_path(report["kind"], judge_model_name(settings))
+    path = snapshot_path(report["kind"], judge_model_name(settings), golden)
     atomic_write_json(path, report)
     rolling_retention()
     return path

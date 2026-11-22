@@ -13,6 +13,10 @@ title 可重复，都不稳定，不作键。
 汇总口径（null ≠ 0，AGENTS 硬约束 1）：指标纯函数层空 relevant → None（没测出），
 summary.metrics_avg 只对非 None 值求均值、全 None 时记 None；检索返回空=0 是
 真实失败信号，与「没测出」分开计数（not_measured / empty_ranked）。
+
+语料注记（corpus_note）：随快照落档防误读外推，规模反映**运行时真实点数**
+（调用方注入 corpus_count，eval 层不做 IO；NIGHT-026 起废除硬编码规模）——
+点数不可得或空集合记「未确认/为空」，绝不冒充具体数字、不回落任何旧值。
 """
 
 from __future__ import annotations
@@ -23,10 +27,21 @@ from typing import Any
 from bidqa.eval.agent_eval import load_golden
 from bidqa.eval.retrieval_metrics import ndcg_at_k, recall_at_k, reciprocal_rank
 
-CORPUS_NOTE = (
-    "当前 Qdrant 仅 75 向量（FAQ 存量），recall/MRR/nDCG 是该小集合上的观测值，"
-    "结论不外推到全量语料；重新 ingest 后必须重测。"
-)
+
+def corpus_note(point_count: int | None) -> str:
+    """语料注记（单入口收口，docs/02 §0.1）：规模如实随运行时点数变化。
+
+    point_count = Qdrant 集合真实点数（调用方注入）；不可得（None）或空集合
+    （0）时不冒充具体数字、不回落旧值（硬约束 1：取不到的数值绝不记 0 冒充）。
+    """
+    if point_count:  # 真实正数 → 注记如实含该数（语料增减后随快照变化）
+        scale = f"当前 Qdrant 共 {point_count} 点"
+    elif point_count == 0:
+        scale = "当前 Qdrant 集合为空（无可用语料点）"  # 真实空读数，不给数字口径
+    else:
+        scale = "当前 Qdrant 点数不可用（未能读取集合点数）"
+    return (f"{scale}，recall/MRR/nDCG 是当前语料上的观测值，"
+            "结论不外推到全量语料；重新 ingest 后必须重测。")
 
 
 def _metric_keys(ks: tuple[int, ...]) -> list[str]:
@@ -35,11 +50,13 @@ def _metric_keys(ks: tuple[int, ...]) -> list[str]:
 
 def run_retrieval_eval(golden_path: str, retriever: Any,
                        ks: tuple[int, ...] = (5, 10),
-                       env: dict[str, Any] | None = None) -> dict:
+                       env: dict[str, Any] | None = None,
+                       corpus_count: int | None = None) -> dict:
     """逐题检索 → 指标 → 均值；retriever 需提供 .retrieve(question, top_k)。
 
     ks 同时决定检索窗口（top_k=max(ks)）与指标项（每 k 各出 recall/ndcg，
     MRR 无 k 截断）；空 ks = 参数错误（Nothing to measure，当场抛）。
+    corpus_count = 运行时 Qdrant 真实点数（调用方注入），决定 corpus_note 规模口径。
     """
     if not ks:
         raise ValueError("ks 不能为空（至少一个 k）")
@@ -82,7 +99,7 @@ def run_retrieval_eval(golden_path: str, retriever: Any,
             key: round(sum(vals) / len(vals), 4) if vals else None
             for key, vals in raw_values.items()
         },
-        "corpus_note": CORPUS_NOTE,  # 75 向量局限声明随快照落档，防误读外推
+        "corpus_note": corpus_note(corpus_count),  # 语料注记随快照落档，防误读外推
     }
     return {
         "kind": "retrieval",
@@ -92,22 +109,25 @@ def run_retrieval_eval(golden_path: str, retriever: Any,
     }
 
 
-def write_retrieval_snapshot(report: dict, settings: Any) -> Path:
-    """快照命名规范同 agent/rag（docs/01 §4.4）：{kind}_{日期}_{git}_{judge}.json。"""
+def write_retrieval_snapshot(report: dict, settings: Any, *,
+                             golden: str | Path | None = None) -> Path:
+    """快照命名规范同 agent/rag（docs/01 §4.4）：{kind}_{日期}_{golden}_{git}_{judge}.json
+    （NIGHT-036：golden 不可得退回旧四段名）。"""
     from bidqa.eval.agent_eval import atomic_write_json, judge_model_name, snapshot_path
     from bidqa.eval.ragas import rolling_retention
 
-    path = snapshot_path(report["kind"], judge_model_name(settings))
+    path = snapshot_path(report["kind"], judge_model_name(settings), golden)
     atomic_write_json(path, report)
     rolling_retention()  # 滚动保留与其他模式一致（P1-18）
     return path
 
 
-def build_retrieval_env(settings: Any) -> dict[str, Any]:
+def build_retrieval_env(settings: Any, corpus_count: int | None = None) -> dict[str, Any]:
     """快照 env：chat/embedding 指纹（脱敏，judge._fingerprint 同款）+ 语料注记。
 
     retrieval 模式不调用 chat/judge——chat 指纹仅为批次环境留档；embedding 未
     配置（has_embedding=False）记 None = BM25 灾备通道，快照可区分两批。
+    corpus_count 同 run_retrieval_eval：运行时真实点数，注记经 corpus_note 收口。
     """
     from bidqa.eval.judge import chat_fingerprint, embedding_fingerprint
 
@@ -115,4 +135,4 @@ def build_retrieval_env(settings: Any) -> dict[str, Any]:
     embedding = (list(embedding_fingerprint(settings))
                  if getattr(settings, "has_embedding", False) else None)
     return {"link": "internal", "chat": chat, "embedding": embedding,
-            "note": CORPUS_NOTE}
+            "note": corpus_note(corpus_count)}

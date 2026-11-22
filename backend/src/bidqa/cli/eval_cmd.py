@@ -36,7 +36,7 @@ def _eval_agent(args, _settings: Any) -> int:
     except RuntimeError as exc:  # 工具不齐（服务宕机）→ 拒绝跑批，不产出误导分数
         print(f"评测中止：{exc}", file=sys.stderr)
         return 2
-    path = write_snapshot(report, get_settings())
+    path = write_snapshot(report, get_settings(), golden=args.golden)  # NIGHT-036：golden 段入快照名
     print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
     for r in report["cases"]:
         mark = "PASS" if r["pass"] else "FAIL"
@@ -71,11 +71,26 @@ def _eval_rag(args, _settings: Any) -> int:
     except Exception as exc:  # 5032 异源 / 判分未配置 → 拒跑，不产出误导分数
         print(f"评测中止：{exc}", file=sys.stderr)
         return 2
-    path = write_rag_snapshot(report, get_settings())
+    path = write_rag_snapshot(report, get_settings(), golden=args.golden)  # NIGHT-036：golden 段入快照名
     print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
     avg = report["summary"].get("avg_score")
     print(f"快照: {path}")
     return 0 if avg is not None and avg >= 0.9 else 1
+
+
+def _qdrant_point_count() -> int | None:
+    """读取 Qdrant 集合真实点数（只读 count，零写入；失败=None=不可用）。
+
+    语料注记的数据源（NIGHT-026：注记随运行时真实点数变化，不再硬编码规模）。
+    硬约束 1：取不到记「不可用」——绝不回落旧值、绝不记 0 冒充；具体口径由
+    eval.corpus_note 单入口收口。测试打桩此函数，不触真实 Qdrant。
+    """
+    from bidqa.database.factory import build_repo
+
+    try:
+        return int(build_repo().count())
+    except Exception:
+        return None
 
 
 def _eval_retrieval(args, _settings: Any) -> int:
@@ -93,9 +108,12 @@ def _eval_retrieval(args, _settings: Any) -> int:
     from bidqa.rag.factory import build_retriever
 
     settings = get_settings()
+    corpus_count = _qdrant_point_count()
     report = run_retrieval_eval(args.golden, build_retriever(),
-                                env=build_retrieval_env(settings))
-    path = write_retrieval_snapshot(report, settings)
+                                corpus_count=corpus_count,
+                                env=build_retrieval_env(settings,
+                                                        corpus_count=corpus_count))
+    path = write_retrieval_snapshot(report, settings, golden=args.golden)  # NIGHT-036：golden 段入快照名
     print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
     for r in report["cases"]:
         if r["measured"]:

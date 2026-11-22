@@ -37,7 +37,10 @@ def _ingest_knowledge(args) -> int:
     if args.dry_run:
         print("── dry-run 抽样 5 条 ──")
         for c in chunks[:5]:
-            print(f"  [{c.source_type}] {c.title[:40]} | id={c.id[:8]} | text={c.text[:40]}…")
+            # url 段固定打印（NIGHT-030）：真跑付费嵌入前人工核验来源映射；
+            # 无 URL 列/值非法时 loader 留空，此处显示为空（不省略段、不伪造值）
+            print(f"  [{c.source_type}] {c.title[:40]} | id={c.id[:8]} | text={c.text[:40]}…"
+                  f" | url={c.url}")
         print("试运行结束，未写库")
         return 0
     for e in errors[:10]:
@@ -79,8 +82,11 @@ def _ingest_pdf(args, settings: Any) -> int:
     if args.dry_run:
         print("── dry-run 抽样 5 条 ──")
         for c in chunks[:5]:
+            # url 段固定打印（NIGHT-035，与 knowledge 口径对齐）：未传 --url 时
+            # 显示为空，不省略段、不伪造值；真跑付费嵌入前人工核验来源映射
             print(f"  [{c.source_type}] {c.title[:40]} | page={c.page} "
-                  f"| ref={c.ref} | text={c.text[:40]}…")
+                  f"| ref={c.ref} | text={c.text[:40]}…"
+                  f" | url={c.url}")
         print("试运行结束，未写库")
         return 0
     repo = build_repo()

@@ -48,3 +48,44 @@ def test_atomic_write_json_tmp_name_is_pid_unique(tmp_path, monkeypatch) -> None
     mod = __import__("bidqa.eval.agent_eval", fromlist=["atomic_write_json"])
     mod.atomic_write_json(tmp_path / "snap.json", {"x": 1})
     assert seen and f".{os.getpid()}.tmp" in seen[0]
+
+
+def test_consumers_read_legacy_and_golden_segment_names(tmp_path, monkeypatch) -> None:
+    """NIGHT-036：命名规则加 golden 段后，旧四段名快照保持可读——按 glob 读
+    快照的消费方（列表 API / 滚动保留）不得因命名规则变化读到旧文件报错。"""
+    import json
+
+    from bidqa.api import eval_runs
+    from bidqa.eval.ragas import rolling_retention
+
+    legacy = tmp_path / "rag_20261122_da2329d_deepseek-flash.json"  # 旧四段名
+    legacy.write_text(json.dumps({"kind": "rag", "summary": {"total": 5, "avg_score": 0.9}}),
+                      encoding="utf-8")
+    with_golden = tmp_path / "rag_20261122_rag_law_v1_da2329d_deepseek-flash.json"  # 新五段名
+    with_golden.write_text(json.dumps({"kind": "rag", "summary": {"total": 7, "avg_score": 0.8}}),
+                           encoding="utf-8")
+
+    # 列表 API：glob *.json，新旧名同列、内容各自读出
+    monkeypatch.setattr(eval_runs, "_results_dir", lambda: tmp_path)
+    runs = {r["name"]: r for r in eval_runs.list_runs(settings=None)["runs"]}
+    assert runs[legacy.name]["score"] == 0.9
+    assert runs[with_golden.name]["score"] == 0.8
+
+    # 滚动保留：glob *.json 按 mtime，不依赖文件名段数
+    monkeypatch.setattr("bidqa.eval.ragas.RESULTS_DIR", tmp_path)
+    assert rolling_retention(keep=2) == 0
+    assert legacy.is_file() and with_golden.is_file()
+
+
+def test_golden_slug_normalizes_unsafe_names() -> None:
+    """NIGHT-036：golden 名段归一——仅折文件系统/命令行不安全字符为 _、大小写
+    归一（Windows 不区分大小写，原样入名会重新引入同日互踩）、截 40 字符。"""
+    from bidqa.eval.agent_eval import golden_slug
+
+    assert golden_slug("eval/golden/agent_v0.jsonl") == "agent_v0"
+    assert golden_slug("Rag Law V1.JSONL") == "rag_law_v1"
+    assert golden_slug("my golden (v2).jsonl") == "my_golden_(v2)"  # 空白折 _，括号保留
+    assert golden_slug("最终金集.jsonl") == "最终金集"  # 非 ASCII 金集名原样保留
+    assert golden_slug(None) == "" and golden_slug("") == ""
+    assert golden_slug("...") == ""  # 折完为空 → 退回旧四段名
+    assert len(golden_slug("x" * 100)) == 40

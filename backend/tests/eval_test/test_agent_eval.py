@@ -163,6 +163,13 @@ def test_agent_eval_summary_and_snapshot(tmp_path, monkeypatch) -> None:
     assert json.loads(path.read_text(encoding="utf-8"))["kind"] == "agent"
     assert not path.with_suffix(path.suffix + ".tmp").exists()
 
+    # NIGHT-036：golden 段——金集文件主名入名，段序 kind_日期_golden_git_judge
+    import datetime
+    date_str = datetime.date.today().strftime("%Y%m%d")
+    path_g = snapshot_path("agent", "nojudge", golden=str(golden))  # golden 文件名 agent_v0.jsonl
+    assert path_g.name == f"agent_{date_str}_agent_v0_abc1234_nojudge.json"
+    assert snapshot_path("agent", "nojudge", golden=None) == path  # 不可得退回旧四段名
+
 
 def test_hit_cap_counted(tmp_path) -> None:
     golden = tmp_path / "g.jsonl"
@@ -217,6 +224,38 @@ def test_write_snapshot_applies_rolling_retention(tmp_path, monkeypatch) -> None
     path = write_snapshot(report, S())
     assert path.is_file()
     assert len(list(results.glob("*.json"))) == 100  # 新快照入列，最旧的被滚出（原不清理=101，红）
+
+
+def test_same_day_two_goldens_produce_distinct_snapshots(tmp_path, monkeypatch) -> None:
+    """NIGHT-036（2026-11-22 实测）：rag_v0 快照被 rag_law_v1 覆盖——同日同模式
+    两份金集必须各产出独立文件。fake 报告落 tmp 目录，不跑真实评测。"""
+    from bidqa.eval.ragas import write_rag_snapshot
+
+    results = tmp_path / "eval" / "results"
+    results.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("bidqa.eval.agent_eval.RESULTS_DIR", results)
+    monkeypatch.setattr("bidqa.eval.ragas.RESULTS_DIR", results)  # retention 扫描源
+    monkeypatch.setattr("bidqa.eval.agent_eval.git_short_hash", lambda: "abc1234")
+
+    golden_v0 = tmp_path / "rag_v0.jsonl"
+    golden_v0.write_text("{}", encoding="utf-8")
+    golden_law = tmp_path / "rag_law_v1.jsonl"
+    golden_law.write_text("{}", encoding="utf-8")
+    report = {"kind": "rag", "env": {"link": "internal"}, "summary": {}, "cases": []}
+
+    class S:
+        JUDGE_MODEL = ""
+
+    path_v0 = write_rag_snapshot(report, S(), golden=str(golden_v0))
+    path_law = write_rag_snapshot(report, S(), golden=str(golden_law))
+    assert path_v0.name != path_law.name  # 同日同模式两金集不再互踩（原四段名=同名覆盖）
+    assert "rag_v0" in path_v0.name and "rag_law_v1" in path_law.name
+    assert path_v0.is_file() and path_law.is_file()  # 两份都独立在盘
+    assert json.loads(path_v0.read_text(encoding="utf-8"))["kind"] == "rag"
+    assert json.loads(path_law.read_text(encoding="utf-8"))["kind"] == "rag"
+    # 同金集重跑同日 → 同名覆盖（预期内：同一批次的最新结果只留一份）
+    assert write_rag_snapshot(report, S(), golden=str(golden_v0)).name == path_v0.name
 
 
 # ── WP5c：黄金集扩例合法性 + Plan/Reflection 评测口径 ──
