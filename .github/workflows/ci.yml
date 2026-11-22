@@ -31,7 +31,8 @@ jobs:
           uv run --with pytest-timeout pytest -q --timeout=120 > /tmp/pytest.log 2>&1
           rc=$?
           if [ $rc -ne 0 ]; then
-            tail -n 80 /tmp/pytest.log | while IFS= read -r line; do echo "::error::$line"; done
+            echo "::error::FAILED_LIST $(grep -E '^(FAILED|ERROR)' /tmp/pytest.log | head -20 | paste -sd ';' -)"
+            echo "::error::DETAIL $(sed -n '/= FAILURES /,/short test summary/p' /tmp/pytest.log | head -c 1500 | paste -sd ' ' -)"
           fi
           exit $rc
 

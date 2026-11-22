@@ -6,7 +6,9 @@ from bidqa.config import ConfigError, Settings
 
 
 def test_core_missing_fails_startup():
-    s = Settings(_env_file=None)
+    # 显式清空四件套：pydantic-settings 仍读环境变量（CI 为模块导入注入 dummy），
+    # `_env_file=None` 只关 .env 文件、关不掉环境变量。
+    s = Settings(_env_file=None, CHAT_BASE_URL="", CHAT_API_KEY="", CHAT_MODEL="", QDRANT_URL="")
     assert set(s.missing_core()) == {"CHAT_BASE_URL", "CHAT_API_KEY", "CHAT_MODEL", "QDRANT_URL"}
     with pytest.raises(ConfigError):
         s.validate_core()
