@@ -10,7 +10,7 @@ set -uo pipefail
 BASE="${1:-http://127.0.0.1:8000}"
 TMP="${2:-$(mktemp -d)}"
 [ -n "${2:-}" ] || trap 'rm -rf "$TMP"' EXIT
-PY="${PYTHON:-python}"
+PY="${PYTHON:-${PY:-python}}"
 
 check_all() { # 断言器：解析 $TMP/caseN.{sse,code}，输出 PASS/FAIL 行；有 FAIL 退出码 1
   "$PY" - "$TMP" <<'PYEOF'

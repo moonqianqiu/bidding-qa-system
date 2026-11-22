@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: e2e 断言器变异自检（离线构造坏流，不调模型）
-        run: PY=python3 bash deploy/e2e-chat.sh --mutation-check
+        run: PYTHON=python3 bash deploy/e2e-chat.sh --mutation-check
 
   frontend:
     runs-on: ubuntu-latest
