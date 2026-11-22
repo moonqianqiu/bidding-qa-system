@@ -14,6 +14,17 @@ import pytest
 from bidqa.config import Settings, get_settings
 
 
+@pytest.fixture(autouse=True)
+def _isolate_core_env(monkeypatch):
+    """测试级隔离核心环境变量：CI 为「导入 bidqa.main 时通过 validate_core」注入
+    CHAT_*/QDRANT_URL 占位值；这些值在测试运行期会把 `Settings(_env_file=None)`
+    从「未配置」变成「已配置」，污染配置/健康/Has_chat 等用例（2026-11-22 CI 实锤：
+    doctor 误判 OK、serve 用例真的起服务被超时）。运行期一律清空，与本地开发同语义。
+    """
+    for name in ("CHAT_BASE_URL", "CHAT_API_KEY", "CHAT_MODEL", "QDRANT_URL"):
+        monkeypatch.delenv(name, raising=False)
+
+
 _TEMP_ENV_ORDER = ("TMPDIR", "TEMP", "TMP")
 
 
