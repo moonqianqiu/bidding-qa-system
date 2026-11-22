@@ -43,28 +43,36 @@ def judge_model_name(settings: Any) -> str:
     return (settings.JUDGE_MODEL or "nojudge").replace("/", "_")
 
 
-def golden_slug(golden_path: str | Path | None) -> str:
-    """黄金集名段（快照命名单一收口，NIGHT-036）：文件主名折为文件名安全段。
-
-    只替换文件系统/命令行不安全字符（空白、Windows 保留符、控制符）为 _，
-    小写归一（Windows 大小写不敏感——不归一会重新引入同日互踩），其余（含中文
-    金集名）原样保留；截 40 字符；不可得（None/空/折完为空）返回空串——调用方
-    退回旧四段命名。
+def slug_segment(text: str | None) -> str:
+    """快照名安全段归一（单一收口，NIGHT-046）：文件系统/命令行不安全字符（空白、
+    Windows 保留符、控制符）折 _，小写归一（Windows 大小写不敏感——不归一会重新
+    引入同日互踩），其余（含中文）原样保留；截 40 字符；不可得（None/空/折完为空）
+    返回空串——调用方省略该段、退回旧命名。
     """
-    if not golden_path:
+    if not text:
         return ""
-    stem = Path(golden_path).stem.strip()
-    slug = re.sub(r"[\s\x00-\x1f:*?\"<>|]", "_", stem.lower()).strip("._-")
+    slug = re.sub(r"[\s\x00-\x1f:*?\"<>|]", "_", str(text).strip().lower()).strip("._-")
     return slug[:40]
 
 
-def snapshot_path(kind: str, judge: str, golden: str | Path | None = None) -> Path:
+def golden_slug(golden_path: str | Path | None) -> str:
+    """黄金集名段（NIGHT-036）：金集文件主名经 slug_segment 归一。"""
+    if not golden_path:
+        return ""
+    return slug_segment(Path(golden_path).stem)
+
+
+def snapshot_path(kind: str, judge: str, golden: str | Path | None = None,
+                  scope: str | None = None) -> Path:
     """命名规范（docs/01 §4.4）：{kind}_{YYYYMMDD}_{golden}_{git短hash}_{判分模型}.json。
 
-    NIGHT-036：golden 段=金集文件主名（golden_slug 归一）——同日同模式两份金集
+    NIGHT-036：golden 段=金集文件主名（slug_segment 归一）——同日同模式两份金集
     各产出独立文件（2026-11-22 实测 rag_v0 快照曾被 rag_law_v1 覆盖）；golden
     不可得时退回旧四段名 {kind}_{YYYYMMDD}_{git}_{judge}.json，旧快照仍可读
     （消费方按 *.json glob + mtime，不依赖段数）。
+    NIGHT-046：scope 段（可省，缺省 None=不带）插在 golden 段之后——retrieval
+    快照落「集合-主通道」（collection_mode），同日同金集跨集合/跨通道不互踩；
+    agent/rag 不传 scope，命名不变；scope 归一后为空同样省略段。
     """
     import datetime
     date_str = datetime.datetime.now().strftime("%Y%m%d")
@@ -72,6 +80,9 @@ def snapshot_path(kind: str, judge: str, golden: str | Path | None = None) -> Pa
     slug = golden_slug(golden)
     if slug:
         parts.append(slug)
+    scope_slug = slug_segment(scope)
+    if scope_slug:
+        parts.append(scope_slug)
     parts += [git_short_hash(), judge]
     return RESULTS_DIR / ("_".join(parts) + ".json")
 

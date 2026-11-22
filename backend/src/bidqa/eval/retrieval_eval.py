@@ -17,6 +17,13 @@ summary.metrics_avg 只对非 None 值求均值、全 None 时记 None；检索�
 语料注记（corpus_note）：随快照落档防误读外推，规模反映**运行时真实点数**
 （调用方注入 corpus_count，eval 层不做 IO；NIGHT-026 起废除硬编码规模）——
 点数不可得或空集合记「未确认/为空」，绝不冒充具体数字、不回落任何旧值。
+
+集合与通道自描述（NIGHT-046）：快照 env 落 `collection`（本批实际指向的
+Qdrant 集合名，与 factory.build_repo 同源；取不到记 None=不可得）、summary
+落 `modes`（逐例 mode=hybrid/bm25_fallback 的实测例计数——通道口径以运行时
+逐例 mode 为准，已有 mode 字段原样保留）；快照名在 golden 段后加 scope 段
+「{集合}-{主通道}」，同日同金集跨集合/跨通道独立成档，不再靠人工归档对账
+（NIGHT-040/042 教训）。
 """
 
 from __future__ import annotations
@@ -24,7 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from bidqa.eval.agent_eval import load_golden
+from bidqa.eval.agent_eval import load_golden, slug_segment
 from bidqa.eval.retrieval_metrics import ndcg_at_k, recall_at_k, reciprocal_rank
 
 
@@ -57,6 +64,9 @@ def run_retrieval_eval(golden_path: str, retriever: Any,
     ks 同时决定检索窗口（top_k=max(ks)）与指标项（每 k 各出 recall/ndcg，
     MRR 无 k 截断）；空 ks = 参数错误（Nothing to measure，当场抛）。
     corpus_count = 运行时 Qdrant 真实点数（调用方注入），决定 corpus_note 规模口径。
+    summary.modes（NIGHT-046）：逐例 mode（hybrid/bm25_fallback）的实测例计数，
+    通道口径随快照自描述；没测出（not_measured）的例未跑检索不计入，逐例 mode
+    字段原样保留（兼容）。
     """
     if not ks:
         raise ValueError("ks 不能为空（至少一个 k）")
@@ -89,12 +99,17 @@ def run_retrieval_eval(golden_path: str, retriever: Any,
             "refs": len(refs), "hits": len(ranked), "mode": result.mode,
             "measured": True, "metrics": metrics,
         })
+    mode_counts: dict[str, int] = {}  # NIGHT-046：通道口径自描述（只计实测例）
+    for r in results:
+        if r["measured"] and r["mode"]:
+            mode_counts[r["mode"]] = mode_counts.get(r["mode"], 0) + 1
     summary = {
         "total": len(results),
         "measured": sum(1 for r in results if r["measured"]),
         "not_measured": sum(1 for r in results if not r["measured"]),  # 空 relevant
         "empty_ranked": sum(1 for r in results
                             if r["measured"] and r["hits"] == 0),  # 检索空=真实 0 分
+        "modes": dict(sorted(mode_counts.items())),  # hybrid/bm25_fallback 逐例计数
         "metrics_avg": {
             key: round(sum(vals) / len(vals), 4) if vals else None
             for key, vals in raw_values.items()
@@ -109,30 +124,58 @@ def run_retrieval_eval(golden_path: str, retriever: Any,
     }
 
 
+def retrieval_scope_slug(report: dict) -> str:
+    """retrieval 快照命名 scope 段（NIGHT-046，单入口）：{集合名}-{主通道}。
+
+    集合 = env.collection（build_retrieval_env 注入；None=不可得 → 该半段省略）；
+    主通道 = summary.modes 中实测例最多的 mode（并列取字典序首个，确定性）。
+    两者皆不可得 → ""（退回旧命名，不带 scope 段）。文件名只是对账索引，权威
+    口径在快照 env.collection / summary.modes 本体。
+    """
+    env = report.get("env") or {}
+    collection = env.get("collection") if isinstance(env, dict) else None
+    modes = (report.get("summary") or {}).get("modes") or {}
+    dominant = ""
+    if isinstance(modes, dict) and modes:
+        dominant = max(sorted(modes), key=lambda m: modes[m])  # 并列取字典序首个
+    parts = [slug_segment(collection), slug_segment(dominant)]
+    return "-".join(p for p in parts if p)
+
+
 def write_retrieval_snapshot(report: dict, settings: Any, *,
                              golden: str | Path | None = None) -> Path:
     """快照命名规范同 agent/rag（docs/01 §4.4）：{kind}_{日期}_{golden}_{git}_{judge}.json
-    （NIGHT-036：golden 不可得退回旧四段名）。"""
+    （NIGHT-036：golden 不可得退回旧四段名）。NIGHT-046：另落 scope 段
+    「{集合}-{主通道}」（retrieval_scope_slug 单入口）——同日同金集跨集合/跨通道
+    不互踩；agent/rag writer 不传 scope，命名不变。"""
     from bidqa.eval.agent_eval import atomic_write_json, judge_model_name, snapshot_path
     from bidqa.eval.ragas import rolling_retention
 
-    path = snapshot_path(report["kind"], judge_model_name(settings), golden)
+    path = snapshot_path(report["kind"], judge_model_name(settings), golden,
+                         scope=retrieval_scope_slug(report))
     atomic_write_json(path, report)
     rolling_retention()  # 滚动保留与其他模式一致（P1-18）
     return path
 
 
 def build_retrieval_env(settings: Any, corpus_count: int | None = None) -> dict[str, Any]:
-    """快照 env：chat/embedding 指纹（脱敏，judge._fingerprint 同款）+ 语料注记。
+    """快照 env：集合名（NIGHT-046）+ chat/embedding 指纹（脱敏，judge._fingerprint
+    同款）+ 语料注记。
 
     retrieval 模式不调用 chat/judge——chat 指纹仅为批次环境留档；embedding 未
     配置（has_embedding=False）记 None = BM25 灾备通道，快照可区分两批。
-    corpus_count 同 run_retrieval_eval：运行时真实点数，注记经 corpus_note 收口。
+    collection = settings.QDRANT_COLLECTION（本批评测实际指向的集合，与
+    database.factory.build_repo 同源）；缺属性/空串记 None=不可得，绝不冒充
+    默认集合名（硬约束 1）。通道口径以运行时逐例 mode 为准（summary.modes 落
+    档），env 不重复记配置推导值。corpus_count 同 run_retrieval_eval：运行时
+    真实点数，注记经 corpus_note 收口。
     """
     from bidqa.eval.judge import chat_fingerprint, embedding_fingerprint
 
     chat = list(chat_fingerprint(settings)) if getattr(settings, "has_chat", False) else None
     embedding = (list(embedding_fingerprint(settings))
                  if getattr(settings, "has_embedding", False) else None)
-    return {"link": "internal", "chat": chat, "embedding": embedding,
-            "note": corpus_note(corpus_count)}
+    collection = (str(getattr(settings, "QDRANT_COLLECTION", "") or "").strip()
+                  or None)  # 空/缺=不可得，不冒充默认值（硬约束 1）
+    return {"link": "internal", "collection": collection, "chat": chat,
+            "embedding": embedding, "note": corpus_note(corpus_count)}

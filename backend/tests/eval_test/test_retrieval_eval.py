@@ -2,7 +2,9 @@
 
 覆盖：聚合均值精确值、字段齐全、空 relevant=None 不入均值、检索空=0 真实信号
 单独计数、重复 id 去重、top_k=max(ks) 传参、env 透传、语料注记随运行时真实
-点数变化（NIGHT-026：不可得/空集合不冒充数字、不回落硬编码旧值）。
+点数变化（NIGHT-026：不可得/空集合不冒充数字、不回落硬编码旧值）、通道口径
+modes 分桶与 env.collection 集合维度、同日同金集跨集合/通道快照可区分
+（NIGHT-046，fake 写 tmp，不跑真实评测）。
 """
 
 import json
@@ -12,7 +14,9 @@ import pytest
 from bidqa.eval.retrieval_eval import (
     build_retrieval_env,
     corpus_note,
+    retrieval_scope_slug,
     run_retrieval_eval,
+    write_retrieval_snapshot,
 )
 from bidqa.rag.retrieve import Hit, RetrievalResult
 
@@ -77,6 +81,7 @@ def test_run_retrieval_eval_aggregates_exact(tmp_path):
     assert report["summary"]["measured"] == 3
     assert report["summary"]["not_measured"] == 1  # c3 空 relevant=没测出
     assert report["summary"]["empty_ranked"] == 1  # c4 检索空=真实 0 分，分开计数
+    assert report["summary"]["modes"] == {"bm25_fallback": 3}  # 通道口径自描述（NIGHT-046）
     # 缺省（调用方未注入点数）= 点数不可得口径：不冒充数字、不回落硬编码旧值
     assert report["summary"]["corpus_note"] == corpus_note(None)
     assert "75" not in report["summary"]["corpus_note"]
@@ -145,6 +150,69 @@ def test_build_retrieval_env_note_reflects_count():
     assert {"link", "chat", "embedding"} <= set(env)  # 指纹槽结构不变
 
 
+def test_build_retrieval_env_carries_collection():
+    """NIGHT-046：env 增集合维度——本批评测实际指向的 Qdrant 集合随快照自描述；
+    缺属性/空串=不可得记 None（绝不冒充默认集合名，硬约束 1），既有槽位不破坏。"""
+
+    class _Settings:
+        has_chat = False
+        has_embedding = False
+        QDRANT_COLLECTION = "bidqa_knowledge_v2"
+
+    env = build_retrieval_env(_Settings(), corpus_count=10)
+    assert env["collection"] == "bidqa_knowledge_v2"
+    assert {"link", "collection", "chat", "embedding", "note"} <= set(env)
+
+    class _NoCollection:  # 旧式打桩 settings：无该属性 → None=不可得
+        has_chat = False
+        has_embedding = False
+
+    assert build_retrieval_env(_NoCollection())["collection"] is None
+
+    class _EmptyCollection(_NoCollection):
+        QDRANT_COLLECTION = "   "
+
+    assert build_retrieval_env(_EmptyCollection())["collection"] is None
+
+
+def test_run_retrieval_eval_modes_breakdown_mixed(tmp_path):
+    """NIGHT-046：通道口径随逐例 mode 聚合——混合通道如实分桶；没测出的例
+    （未跑检索）不计入 modes。"""
+
+    class _MixedRetriever:
+        def retrieve(self, question: str, top_k: int = 5) -> RetrievalResult:
+            mode = "hybrid" if question == "问题一" else "bm25_fallback"
+            hits = [_hit("r1")] if question == "问题一" else []
+            return RetrievalResult(hits=hits, kind="faq", rrf_k=8,
+                                   mode=mode, elapsed_ms=1)
+
+    golden = _write_golden(tmp_path, [
+        {"id": "c1", "question": "问题一", "ref_sources": ["r1"]},
+        {"id": "c2", "question": "问题二", "ref_sources": ["r1"]},  # 检索空=0，仍实测
+        {"id": "c3", "question": "问题三", "ref_sources": []},  # 没测出：不计入 modes
+    ])
+    report = run_retrieval_eval(golden, _MixedRetriever(), ks=(5,))
+    assert report["summary"]["modes"] == {"bm25_fallback": 1, "hybrid": 1}
+    assert report["summary"]["measured"] == 2 and report["summary"]["not_measured"] == 1
+    assert report["cases"][0]["mode"] == "hybrid"  # 逐例 mode 字段原样保留（兼容）
+
+
+def test_retrieval_scope_slug_dominant_mode_and_collection():
+    """NIGHT-046：scope 段=集合-主通道（实测例最多的 mode，并列取字典序首个，
+    确定性）；半段不可得各自省略；皆不可得 → "" 退回旧命名。"""
+    assert retrieval_scope_slug({"env": {"collection": "bidqa_knowledge_v2"},
+                                 "summary": {"modes": {"hybrid": 3}}},
+                                ) == "bidqa_knowledge_v2-hybrid"
+    assert retrieval_scope_slug({"env": {"collection": "v1"},
+                                 "summary": {"modes": {"bm25_fallback": 1,
+                                                       "hybrid": 2}}}) == "v1-hybrid"
+    assert retrieval_scope_slug({"env": {}, "summary": {"modes": {"hybrid": 1}}}) == "hybrid"
+    assert retrieval_scope_slug({"env": {"collection": "v2"},
+                                 "summary": {"modes": {}}}) == "v2"
+    assert retrieval_scope_slug({"env": {}, "summary": {}}) == ""
+    assert retrieval_scope_slug({}) == ""  # 旧式手工报告（无 env/summary）不炸
+
+
 def test_run_retrieval_eval_duplicate_hits_dedupe(tmp_path):
     """重复 id 去重保序：[r1,r1,r2] 截 2 仍含 r2（不去重 → recall@2=0，断言可红）。"""
     retriever = FakeRetriever({"问题": [_hit("r1"), _hit("r1"), _hit("r2")]})
@@ -202,3 +270,45 @@ def test_write_retrieval_snapshot_golden_segment(tmp_path, monkeypatch):
                                     golden=str(tmp_path / "rag_v0.jsonl"))
     assert "rag_v0" in path.name and path.is_file()
     assert json.loads(path.read_text(encoding="utf-8"))["kind"] == "retrieval"
+
+
+def test_same_golden_same_day_different_collection_or_channel_distinct(tmp_path, monkeypatch):
+    """NIGHT-046（验收 2）：同日同金集、不同集合/通道的两次评测在文件名可区分
+    （同名=互踩覆盖，env 再准也只剩一份），且各自 env.collection / summary.modes
+    如实落档——跨集合对账不再靠人工归档（NIGHT-040/042 教训）。fake 报告写 tmp
+    （AGENTS 红线），不跑真实评测。"""
+    results = tmp_path / "eval" / "results"
+    results.mkdir(parents=True)
+    monkeypatch.setattr("bidqa.eval.agent_eval.RESULTS_DIR", results)
+    monkeypatch.setattr("bidqa.eval.ragas.RESULTS_DIR", results)  # retention 扫描源
+    monkeypatch.setattr("bidqa.eval.agent_eval.git_short_hash", lambda: "abc1234")
+
+    def _report(collection: str, modes: dict) -> dict:
+        return {"kind": "retrieval",
+                "env": {"link": "internal", "collection": collection},
+                "summary": {"metrics_avg": {}, "modes": modes}, "cases": []}
+
+    class S:
+        JUDGE_MODEL = ""
+
+    golden = str(tmp_path / "rag_v0.jsonl")
+    path_v2_dense = write_retrieval_snapshot(
+        _report("bidqa_knowledge_v2", {"hybrid": 3}), S(), golden=golden)
+    path_v1_bm25 = write_retrieval_snapshot(
+        _report("bidqa_knowledge_v1", {"bm25_fallback": 3}), S(), golden=golden)
+    path_v2_bm25 = write_retrieval_snapshot(
+        _report("bidqa_knowledge_v2", {"bm25_fallback": 3}), S(), golden=golden)
+
+    assert len({path_v2_dense.name, path_v1_bm25.name, path_v2_bm25.name}) == 3
+    assert "bidqa_knowledge_v2-hybrid" in path_v2_dense.name
+    assert "bidqa_knowledge_v1-bm25_fallback" in path_v1_bm25.name
+    assert "bidqa_knowledge_v2-bm25_fallback" in path_v2_bm25.name
+    for p in (path_v2_dense, path_v1_bm25, path_v2_bm25):
+        assert p.is_file()  # 三份都独立在盘（互不覆盖）
+    # 回读对账：env.collection / summary.modes 各自如实保留
+    data = json.loads(path_v1_bm25.read_text(encoding="utf-8"))
+    assert data["env"]["collection"] == "bidqa_knowledge_v1"
+    assert data["summary"]["modes"] == {"bm25_fallback": 3}
+    # 同集合同通道重跑 → 同名覆盖（同批次最新一份，语义与 NIGHT-036 一致）
+    assert write_retrieval_snapshot(
+        _report("bidqa_knowledge_v2", {"hybrid": 3}), S(), golden=golden).name == path_v2_dense.name

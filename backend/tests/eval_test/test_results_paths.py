@@ -89,3 +89,30 @@ def test_golden_slug_normalizes_unsafe_names() -> None:
     assert golden_slug(None) == "" and golden_slug("") == ""
     assert golden_slug("...") == ""  # 折完为空 → 退回旧四段名
     assert len(golden_slug("x" * 100)) == 40
+
+
+def test_snapshot_path_scope_segment(tmp_path, monkeypatch) -> None:
+    """NIGHT-046：scope 段（retrieval 集合+主通道）插在 golden 段之后——同日同
+    金集跨集合/通道不互踩；scope 不可得省略段（旧命名）；agent 不传 scope 命名
+    不变（回归锚）；段归一走 slug_segment 同款规则。"""
+    import datetime
+
+    from bidqa.eval.agent_eval import snapshot_path
+
+    monkeypatch.setattr("bidqa.eval.agent_eval.git_short_hash", lambda: "abc1234")
+    date_str = datetime.date.today().strftime("%Y%m%d")
+    p = snapshot_path("retrieval", "nojudge", golden="rag_v0.jsonl",
+                      scope="bidqa_knowledge_v2-hybrid")
+    assert p.name == f"retrieval_{date_str}_rag_v0_bidqa_knowledge_v2-hybrid_abc1234_nojudge.json"
+    # scope 不可得 → 无 scope 段（退回旧命名）
+    assert snapshot_path("retrieval", "nojudge", golden="rag_v0.jsonl",
+                         scope=None).name == f"retrieval_{date_str}_rag_v0_abc1234_nojudge.json"
+    assert snapshot_path("retrieval", "nojudge", golden="rag_v0.jsonl",
+                         scope="").name == f"retrieval_{date_str}_rag_v0_abc1234_nojudge.json"
+    # scope 不安全字符归一（空白折 _、小写），golden 缺省时 scope 仍在 git 段前
+    assert snapshot_path("retrieval", "nojudge", golden=None,
+                         scope="Bidqa V2 (tmp)").name == \
+        f"retrieval_{date_str}_bidqa_v2_(tmp)_abc1234_nojudge.json"
+    # agent/rag 不传 scope → 命名与 NIGHT-036 逐字一致（既有字段不受破坏）
+    assert snapshot_path("agent", "nojudge", golden="agent_v0.jsonl").name == \
+        f"agent_{date_str}_agent_v0_abc1234_nojudge.json"

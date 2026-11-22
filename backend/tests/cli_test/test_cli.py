@@ -494,6 +494,7 @@ def test_eval_cli_accepts_retrieval_mode(monkeypatch, tmp_path, capsys):
     assert captured["env"]["note"] and "793" in captured["env"]["note"]
     assert "75" not in captured["env"]["note"]  # 不回落硬编码旧值
     assert {"link", "chat", "embedding"} <= set(captured["env"])
+    assert "collection" in captured["env"]  # NIGHT-046：集合维度随 env 落档（值随运行时配置）
 
 
 def test_eval_cli_retrieval_all_none_is_not_measured(monkeypatch, tmp_path, capsys):
