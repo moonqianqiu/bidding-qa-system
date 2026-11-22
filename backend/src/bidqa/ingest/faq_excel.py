@@ -6,10 +6,18 @@
 时取该列写入 Chunk.url；值须 http(s) 开头，空值/非 URL 文本一律留空不报错；
 裸「来源」「来源站点」与「访问日期」类列不算 URL 列。
 url 不参与 Chunk.id（id 只由 source_type|title|text 决定），有无该列 id 不变。
+
+去重键（NIGHT-050）：问句先经 `_norm_key` 归一化（NFKC 全半角折叠——覆盖
+`?？` `;；` `：:` `，,` 等全半角标点与全角字母数字/空格——再剥全部空白、转小写）
+后判重，半角/全角混排与多打空格的同题不再漏判；判定重复时保留**答案更长**
+（内容超集）的一条，答案等长保留首条——禁止 first-wins，防截断版挤掉完整版
+（20261102 批次 rag_flow_002 教训，docs/02 F1）。保留行的 title/text 原样不动，
+Chunk.id 仍由保留行内容决定。
 """
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
 import openpyxl
@@ -38,8 +46,18 @@ def _clean_url(value: Any) -> str:
     return s if s.lower().startswith(_URL_SCHEMES) else ""
 
 
+def _norm_key(q: str) -> str:
+    """问句去重键归一化（单入口）：NFKC 全半角折叠 + 剥全部空白 + 小写。
+
+    NFKC 把全角标点/字母/数字折叠成半角（`？`→`?`、`；`→`;`、`：`→`:`、
+    `，`→`,`、全角空格→空格等），空白逐字符剥除（中英文题面多打空格不影响
+    判重）；仅作去重键，保留行的 title/text 原样不动（id 不受影响）。
+    """
+    return "".join(ch for ch in unicodedata.normalize("NFKC", q) if not ch.isspace()).lower()
+
+
 def load_faq_chunks(path: str, batch_id: str, sheet: int = 0) -> tuple[list[Chunk], list[str]]:
-    """返回 (chunks, errors)。重复问题去重（保留首个）。"""
+    """返回 (chunks, errors)。归一化问句判重，重复时保留答案更长（超集）的一条。"""
     wb = openpyxl.load_workbook(path, read_only=True)
     ws = wb.worksheets[sheet]
     rows = [r for r in ws.iter_rows(values_only=True) if r and r[0] is not None]
@@ -55,18 +73,28 @@ def load_faq_chunks(path: str, batch_id: str, sheet: int = 0) -> tuple[list[Chun
 
     chunks: list[Chunk] = []
     errors: list[str] = []
-    seen_q: set[str] = set()
+    # norm_q -> (首现行号, chunks 下标, 保留行答案长度)；重复且更长则原位替换
+    seen_q: dict[str, tuple[int, int, int]] = {}
     for i, r in enumerate(rows, start=2):  # xlsx 行号从 2（含表头）
         q, a = (str(r[0]).strip() if r[0] else ""), (str(r[1]).strip() if len(r) > 1 and r[1] else "")
         if not q or not a:
             errors.append(f"第{i}行：问/答存在空值，跳过")
             continue
-        if q in seen_q:
-            errors.append(f"第{i}行：重复问题已去重「{q[:30]}」")
-            continue
-        seen_q.add(q)
         url = _clean_url(r[url_idx]) if url_idx is not None and len(r) > url_idx else ""
+        key = _norm_key(q)
+        if key in seen_q:
+            first_row, idx, kept_len = seen_q[key]
+            if len(a) > kept_len:  # 本行答案更长（超集）：原位替换保留行，禁止 first-wins
+                chunks[idx] = Chunk(
+                    source_type="FAQ", title=q, text=a, ctx_summary=q, batch_id=batch_id, url=url,
+                )
+                seen_q[key] = (first_row, idx, len(a))
+                errors.append(f"第{i}行：与第{first_row}行重复问题已去重，保留答案更长的本行「{q[:30]}」")
+            else:
+                errors.append(f"第{i}行：重复问题已去重「{q[:30]}」")
+            continue
         chunks.append(Chunk(
             source_type="FAQ", title=q, text=a, ctx_summary=q, batch_id=batch_id, url=url,
         ))
+        seen_q[key] = (i, len(chunks) - 1, len(a))
     return chunks, errors

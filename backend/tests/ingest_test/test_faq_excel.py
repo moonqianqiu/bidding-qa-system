@@ -110,3 +110,102 @@ def test_load_faq_chunks_url_row_shorter_than_header(tmp_path):
     assert errors == []
     assert len(chunks) == 1
     assert chunks[0].url == ""
+
+
+# ── 去重键归一化（NIGHT-050）：半角/全角与空白变体判重 + 保留超集 ──
+
+
+def test_load_faq_chunks_norm_question_mark_variant(tmp_path):
+    """问号半/全角（? 与 ？）视为同题（20261102 批次 rag_flow_002 教训）。"""
+    x = tmp_path / "qmark.xlsx"
+    make_xlsx(x, [
+        ["问", "答"],
+        ["单一来源采购方式公示被“质疑”应该怎么办?", "完整答案含法条。"],
+        ["单一来源采购方式公示被“质疑”应该怎么办？", "截断答案。"],
+    ])
+    chunks, errors = load_faq_chunks(str(x), batch_id="b1")
+    assert len(chunks) == 1
+    assert chunks[0].text == "完整答案含法条。"  # 重复判定成立保留更长答案
+    assert len(errors) == 1 and "去重" in errors[0]
+
+
+def test_load_faq_chunks_norm_semicolon_variant(tmp_path):
+    """分号半/全角（; 与 ；）混排问句判重。"""
+    x = tmp_path / "semi.xlsx"
+    make_xlsx(x, [
+        ["问", "答"],
+        ["成交结果公告后;如何质疑？", "答案A较长版。"],
+        ["成交结果公告后；如何质疑?", "答案B。"],
+    ])
+    chunks, errors = load_faq_chunks(str(x), batch_id="b1")
+    assert len(chunks) == 1
+    assert chunks[0].text == "答案A较长版。"
+    assert len(errors) == 1 and "去重" in errors[0]
+
+
+def test_load_faq_chunks_norm_whitespace_variant(tmp_path):
+    """空格/全角空格等空白变体判重（剥全部空白后同题）。"""
+    x = tmp_path / "ws.xlsx"
+    make_xlsx(x, [
+        ["问", "答"],
+        ["中标通知书 效力如何？", "更长的完整答案。"],
+        ["中标通知书效力　如何?", "短答案。"],
+    ])
+    chunks, _ = load_faq_chunks(str(x), batch_id="b1")
+    assert len(chunks) == 1
+    assert chunks[0].text == "更长的完整答案。"
+
+
+def test_load_faq_chunks_keep_superset_replaces_truncated_first(tmp_path):
+    """截断版在前、完整版在后：保留超集（替换首条），禁止 first-wins。
+
+    若简单保留首条，截断行入库后 Chunk.id 变化会挤掉 gold 引用
+    （gold 5b98714c = 完整版内容寻址 id，NIGHT-048 §6 方案A）。
+    """
+    x = tmp_path / "truncated_first.xlsx"
+    make_xlsx(x, [
+        ["问", "答"],
+        ["质疑期限是多久?", "截断答案。"],                       # 半角问号 + 短答案（在前）
+        ["质疑期限是多久？", "完整答案：" + "法条原文。" * 10],  # 全角问号 + 超集答案
+    ])
+    chunks, errors = load_faq_chunks(str(x), batch_id="b1")
+    assert len(chunks) == 1
+    assert chunks[0].text == "完整答案：" + "法条原文。" * 10
+    assert chunks[0].title == "质疑期限是多久？"  # 保留行内容原样（含全角问号）
+    assert any("保留答案更长的本行" in e for e in errors)
+
+
+def test_load_faq_chunks_keep_first_when_duplicate_shorter(tmp_path):
+    """正常首次保留：重复行答案不更长（等长/更短）时保留首条。"""
+    x = tmp_path / "first_kept.xlsx"
+    make_xlsx(x, [
+        ["问", "答"],
+        ["如何申请非预算指标？", "首条完整答案。"],
+        ["如何申请非预算指标?", "更短的答案。"],
+        ["如何申请非预算指标？", "等长答案XX。"],
+    ])
+    chunks, errors = load_faq_chunks(str(x), batch_id="b1")
+    assert len(chunks) == 1
+    assert chunks[0].text == "首条完整答案。"
+    assert chunks[0].title == "如何申请非预算指标？"
+    assert len(errors) == 2  # 两条重复行都只记去重，无替换
+
+
+def test_load_faq_chunks_dedup_id_unchanged(tmp_path):
+    """去重/替换不改写保留行内容：kept id == 该行单独成表时的 Chunk.id。"""
+    pair = tmp_path / "pair.xlsx"
+    make_xlsx(pair, [
+        ["问", "答"],
+        ["公示被质疑怎么办?", "截断答案。"],
+        ["公示被质疑怎么办？", "完整答案含法条依据原文。"],
+    ])
+    chunks, _ = load_faq_chunks(str(pair), batch_id="b1")
+    single = tmp_path / "single.xlsx"
+    make_xlsx(single, [
+        ["问", "答"],
+        ["公示被质疑怎么办？", "完整答案含法条依据原文。"],
+    ])
+    alone, _ = load_faq_chunks(str(single), batch_id="b1")
+    assert len(chunks) == 1 and len(alone) == 1
+    assert chunks[0].id == alone[0].id  # id 只由保留行 source_type|title|text 决定
+    assert chunks[0].text == alone[0].text
