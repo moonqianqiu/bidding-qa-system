@@ -8,6 +8,9 @@ plan_steps/reflected（异常用例恒 []/False，消费方免判键）；env.ag
 快照 §4.4：原子写 + 命名 {kind}_{YYYYMMDD}_{golden}_{git短hash}_{judge}.json
 （NIGHT-036：加 golden 段——同日同模式两份金集不互踩；golden 不可得退回旧四段名，
 旧快照仍可读）；env.link="internal"。
+NIGHT-054：agent/rag 快照 env 增 `collection`（本批实际指向的 Qdrant 集合名，
+env_collection 单入口，与 retrieval 快照的 env.collection（NIGHT-046）同源同
+口径；取不到=None 不可得）——三类快照对账统一。
 chat 由调用方注入（真实模型或 fake 脚本），评测代码不感知厂商。
 """
 
@@ -41,6 +44,16 @@ def git_short_hash() -> str:
 
 def judge_model_name(settings: Any) -> str:
     return (settings.JUDGE_MODEL or "nojudge").replace("/", "_")
+
+
+def env_collection(settings: Any) -> str | None:
+    """快照 env 集合名（NIGHT-054，agent/rag 单入口）：本批评测实际指向的 Qdrant
+    集合，与 database.factory.build_repo 同源（settings.QDRANT_COLLECTION）；
+    缺属性/空串=不可得记 None，绝不冒充默认集合名（硬约束 1）。retrieval 快照的
+    build_retrieval_env（NIGHT-046）同语义，三类快照对账口径统一；settings=None
+    （打桩/未配置环境）同口径记 None。
+    """
+    return (str(getattr(settings, "QDRANT_COLLECTION", "") or "").strip() or None)
 
 
 def slug_segment(text: str | None) -> str:
@@ -181,6 +194,7 @@ def run_agent_eval(golden_path: str, loop_factory: Any, settings: Any, *,
     return {"kind": "agent",
             "env": {"link": "internal",
                     "chat_model": (getattr(settings, "CHAT_MODEL", "") or ""),
+                    "collection": env_collection(settings),  # NIGHT-054：集合维度自描述
                     "agent_flags": {"plan": bool(plan_enabled),
                                     "reflect": bool(reflect_enabled)}},  # WP5c A/B 可区分
             "summary": summary, "cases": results, "failed_cases": [

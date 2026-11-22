@@ -171,6 +171,34 @@ def test_agent_eval_summary_and_snapshot(tmp_path, monkeypatch) -> None:
     assert snapshot_path("agent", "nojudge", golden=None) == path  # 不可得退回旧四段名
 
 
+def test_agent_env_carries_collection(tmp_path) -> None:
+    """NIGHT-054：agent 快照 env 增集合维度（env_collection 单入口，与 retrieval
+    env.collection 同源 settings.QDRANT_COLLECTION，与 database.factory.build_repo
+    同源）。三态：有值/空串/缺属性（含 settings=None 打桩）——不可得一律记 None，
+    绝不冒充默认集合名（硬约束 1）。"""
+    golden = tmp_path / "g.jsonl"
+    golden.write_text(GOLDEN, encoding="utf-8")
+
+    class WithCollection:
+        QDRANT_COLLECTION = "bidqa_knowledge_v2"
+
+    class EmptyCollection(WithCollection):
+        QDRANT_COLLECTION = "   "  # 空白=不可得，不冒充默认值
+
+    class NoCollection:  # 旧式打桩 settings：无该属性 → None=不可得
+        pass
+
+    report = run_agent_eval(str(golden), make_factory(FakeChat({})), WithCollection())
+    assert report["env"]["collection"] == "bidqa_knowledge_v2"
+    assert {"link", "chat_model", "collection", "agent_flags"} <= set(report["env"])
+    assert run_agent_eval(str(golden), make_factory(FakeChat({})), EmptyCollection())[
+        "env"]["collection"] is None
+    assert run_agent_eval(str(golden), make_factory(FakeChat({})), NoCollection())[
+        "env"]["collection"] is None
+    assert run_agent_eval(str(golden), make_factory(FakeChat({})), None)[
+        "env"]["collection"] is None  # settings=None 同口径（既有用例的打桩方式）
+
+
 def test_hit_cap_counted(tmp_path) -> None:
     golden = tmp_path / "g.jsonl"
     golden.write_text(

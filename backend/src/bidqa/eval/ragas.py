@@ -3,6 +3,9 @@
 判分与被测异源（执行前强制校验，5032）；单题失败跳过不串批；
 判分缓存按端点-模型分目录（风险表对策）；快照命名规范+滚动保留 100（G5）；
 离线成本预算 <¥5 告警口径：单题 3 维 ≈ 数千 token。
+NIGHT-054：快照 env（顶层与 summary 各一份，保持同内容）增 `collection`
+（本批实际指向的 Qdrant 集合名，env_collection 单入口，与 agent/retrieval
+同源同口径；取不到=None 不可得）——三类快照对账统一。
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from bidqa.clients.llm import ChatClient
 from bidqa.eval.agent_eval import (
     RESULTS_DIR,
     atomic_write_json,
+    env_collection,
     git_short_hash,
     judge_model_name,
 )
@@ -90,6 +94,7 @@ def run_rag_eval(golden_path: str, retriever: Retriever, chat: ChatClient,
     """离线 RAG 评测主入口（生成用主槽位，判分用 judge 槽位，异源强制）。
 
     judge 可注入（测试用 fake）；缺省按 JUDGE_* 构建。
+    快照 env 增 collection（NIGHT-054，env_collection 单入口；取不到=None）。
     """
     judge_fp = validate_heterogeneous(settings)  # 5032 先于任何成本发生
     judge = judge or build_judge(settings)
@@ -128,6 +133,7 @@ def run_rag_eval(golden_path: str, retriever: Retriever, chat: ChatClient,
     _save_cache(judge_fp, cache)
 
     scored_results = [r for r in results if r["score"] is not None]
+    collection = env_collection(settings)  # NIGHT-054：集合维度自描述（两份 env 同内容）
     summary = {
         "total": len(cases), "answered": len(results), "failed": len(failed),
         "avg_score": (round(sum(r["score"] for r in scored_results) / len(scored_results), 4)
@@ -138,10 +144,12 @@ def run_rag_eval(golden_path: str, retriever: Retriever, chat: ChatClient,
                                if r["dims"][dim] is not None]) else None)  # 空集=None 没测出，绝不记 0（P1-17）
             for dim in ("faithfulness", "relevancy", "context_relevancy")
         },
-        "env": {"judge": list(judge_fp), "self_judged": False, "link": "internal"},
+        "env": {"judge": list(judge_fp), "self_judged": False, "link": "internal",
+                "collection": collection},
     }
     report = {"kind": "rag", "env": {"link": "internal", "judge": list(judge_fp),
-                                     "self_judged": False},
+                                     "self_judged": False,
+                                     "collection": collection},
               "summary": summary, "cases": results, "failed_cases": failed}
     _save_cache(judge_fp, cache)
     return report

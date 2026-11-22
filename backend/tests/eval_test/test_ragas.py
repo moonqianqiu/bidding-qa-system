@@ -91,6 +91,61 @@ def test_run_rag_eval_dims_and_cache(tmp_path, monkeypatch) -> None:
     assert judge.calls == 3  # 3 维只判一次，第二轮全命中缓存
 
 
+def test_rag_env_carries_collection(tmp_path, monkeypatch) -> None:
+    """NIGHT-054：rag 快照 env 增集合维度（env_collection 单入口，与 agent/retrieval
+    同源 settings.QDRANT_COLLECTION）。三态：有值/空串/缺属性——不可得记 None，
+    绝不冒充默认集合名（硬约束 1）；顶层 env 与 summary.env 两份保持同内容。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ragas, "RESULTS_DIR", tmp_path / "eval" / "results")
+    monkeypatch.setattr(ragas, "JUDGE_CACHE_DIR",
+                        tmp_path / "eval" / "results" / "judge_cache")
+    golden = tmp_path / "g.jsonl"
+    golden.write_text(GOLDEN, encoding="utf-8")
+
+    class CollectionSettings(FakeSettings):
+        QDRANT_COLLECTION = "bidqa_knowledge_v2"
+
+    class EmptyCollectionSettings(FakeSettings):
+        QDRANT_COLLECTION = "   "  # 空白=不可得，不冒充默认值
+
+    report = ragas.run_rag_eval(str(golden), FakeRetriever(), FakeChat(),
+                                CollectionSettings(), judge=FakeJudge())
+    assert report["env"]["collection"] == "bidqa_knowledge_v2"
+    assert report["summary"]["env"]["collection"] == "bidqa_knowledge_v2"  # 两份同内容
+
+    empty = ragas.run_rag_eval(str(golden), FakeRetriever(), FakeChat(),
+                               EmptyCollectionSettings(), judge=FakeJudge())
+    assert empty["env"]["collection"] is None
+
+    missing = ragas.run_rag_eval(str(golden), FakeRetriever(), FakeChat(),
+                                 FakeSettings(), judge=FakeJudge())
+    assert missing["env"]["collection"] is None  # FakeSettings 无该属性=缺属性态
+
+
+def test_rag_env_collection_survives_snapshot_roundtrip(tmp_path, monkeypatch) -> None:
+    """NIGHT-054：collection 随快照落盘可回读（对账口径在快照本体，与旧快照共存
+    ——旧快照无该键仍可读，消费方 glob+mtime 不依赖键集）。落盘隔离到 tmp。"""
+    from bidqa.eval.agent_eval import snapshot_path
+    from bidqa.eval.ragas import atomic_write_json
+
+    results = tmp_path / "eval" / "results"
+    results.mkdir(parents=True)
+    monkeypatch.setattr("bidqa.eval.agent_eval.RESULTS_DIR", results)
+    monkeypatch.setattr("bidqa.eval.ragas.RESULTS_DIR", results)
+    report = {"kind": "rag", "env": {"link": "internal",
+                                     "collection": "bidqa_knowledge_v2"},
+              "summary": {}, "cases": []}
+    path = snapshot_path("rag", "nojudge")
+    atomic_write_json(path, report)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["env"]["collection"] == "bidqa_knowledge_v2"
+    # 旧快照（无 collection 键）同目录共存且可读：消费方 .get 容错
+    legacy = results / "rag_20260101_old_git.json"
+    legacy.write_text(json.dumps({"kind": "rag", "env": {"link": "internal"},
+                                  "summary": {}, "cases": []}), encoding="utf-8")
+    assert json.loads(legacy.read_text(encoding="utf-8"))["env"].get("collection") is None
+
+
 def test_judge_dim_invalid_output_is_null_not_zero(tmp_path, monkeypatch) -> None:
     """判分输出非法 → None（null=没测出 ≠ 0=得零分，docs/01 §4.4）。"""
     class Garbage:
