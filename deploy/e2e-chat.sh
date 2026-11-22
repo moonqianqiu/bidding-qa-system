@@ -158,7 +158,7 @@ for n, body in cases.items():
     (tmp / f"case{n}.code").write_text("200", encoding="utf-8")
 PYEOF
   echo "── 变异自检：S1/S3/S4/S5/S6 必须出现 FAIL，S2 必须 PASS（断言器咬合力验证）──"
-  OUT=$("$0" __assert_only__ "$TMP" 2>&1 | sed -n '/S1 RAG/,/断言汇总/p')
+  OUT=$(bash "$0" __assert_only__ "$TMP" 2>&1 | sed -n '/S1 RAG/,/断言汇总/p')
   echo "$OUT"
   if ! echo "$OUT" | grep -q "\[FAIL\] S1 RAG: 终态事件"; then echo "变异自检失败：S1 坏流被放行"; exit 1; fi
   if ! echo "$OUT" | grep -q "\[PASS\] S2: done.clarify=true"; then echo "变异自检失败：S2 好流被误杀"; exit 1; fi
