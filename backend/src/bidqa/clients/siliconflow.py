@@ -1,16 +1,22 @@
 """SiliconFlow bge-m3 嵌入与重排客户端（docs/01 clients 层；E2/E4）。
 
 约定：查询与文档走同一 API 入口（单测锁定，保证分数可比）；批量、重试、限流退避；
-trust_env=False。bge-m3 一次返回稠密 1024 + 学习型稀疏（response.sparse_embedding
-缺省时稀疏为 None，由调用方降级）。
+trust_env=False。bge-m3 模型卡宣传稠密 1024 + 学习型稀疏一次返回，**当前公开端点
+实测不交付**：/embeddings 响应缺省无 `sparse_embedding` 键（NIGHT-040 旁挂取证
+20/20 仅 embedding/index/object，docs/01 §4.1 口径债）——客户端按 None 降级，
+学习型 sparse 仅在提供商实际返回时参与；本批占比为 0 时打一次 WARNING（NIGHT-045
+可观测性，不拒收、不改返回形态）。
 """
 
 from __future__ import annotations
 
+import logging
 import time
 
 import httpx
 from qdrant_client import models
+
+logger = logging.getLogger(__name__)
 
 
 class DataSourceError(RuntimeError):
@@ -51,7 +57,11 @@ def _post_with_retry(client: httpx.Client, url: str, payload: dict,
 
 
 class EmbeddingClient:
-    """bge-m3：稠密 1024 + 稀疏一次返回。embed_documents 与 embed_query 调同一 _embed。"""
+    """bge-m3：稠密 1024 必返；学习型稀疏仅当响应含 sparse_embedding（当前端点
+    实测不返回，docs/01 §4.1 口径债）。embed_documents 与 embed_query 调同一 _embed。"""
+
+    # NIGHT-045：单入口（_embed）进程级只打一次 sparse 空置 WARNING——查询/逐批不刷屏
+    _sparse_zero_warned: bool = False
 
     def __init__(self, base_url: str, api_key: str, model: str = "BAAI/bge-m3",
                  batch_size: int = 16, timeout: float = 30.0):
@@ -72,6 +82,7 @@ class EmbeddingClient:
 
     def _embed(self, texts: list[str]) -> list[tuple[list[float], models.SparseVector | None]]:
         out: list[tuple[list[float], models.SparseVector | None]] = []
+        total = sparse_items = 0  # NIGHT-045：本批 sparse item 占比观测（单入口收口）
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i:i + self.batch_size]
             data = _post_with_retry(
@@ -85,7 +96,15 @@ class EmbeddingClient:
                 sp = item.get("sparse_embedding")
                 if sp and sp.get("indices") is not None:
                     sparse = models.SparseVector(indices=sp["indices"], values=sp["values"])
+                    sparse_items += 1
+                total += 1
                 out.append((dense, sparse))
+        if total and sparse_items == 0 and not EmbeddingClient._sparse_zero_warned:
+            EmbeddingClient._sparse_zero_warned = True
+            logger.warning(
+                "sparse 观测：本批 0/%d 条 item 返回 sparse_embedding（占比 0%%）"
+                "——学习型 sparse 通道不写入，hybrid 退化为 dense 单路（docs/01 §4.1 口径债）",
+                total)
         return out
 
     def ping(self) -> bool:

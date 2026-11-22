@@ -1,5 +1,7 @@
 """M1-2：嵌入/重排客户端（respx 模拟；查询与文档同一入口锁定）。"""
 
+import logging
+
 import httpx
 import pytest
 import respx
@@ -70,6 +72,40 @@ def test_500_exhausted_raises():
     client = make_client()
     with pytest.raises(DataSourceError):
         client.embed_documents(["x"])
+
+
+@respx.mock
+def test_sparse_zero_ratio_warns_once(caplog):
+    """NIGHT-045 可观测性：本批 sparse item 占比 0 → 单入口（_embed）WARNING
+    进程级只打一次；不拒收、不改返回形态（dense 照常返回、sparse=None）。
+    变异自证：删 warning 块 → 0 条记录变红；去掉 _sparse_zero_warned 门 →
+    多次调用出多条记录变红。"""
+    respx.post(f"{BASE}/embeddings").mock(return_value=httpx.Response(200, json={"data": [
+        {"embedding": [0.1] * 4}, {"embedding": [0.2] * 4}]}))
+    EmbeddingClient._sparse_zero_warned = False
+    client = make_client()
+    with caplog.at_level(logging.WARNING, logger="bidqa.clients.siliconflow"):
+        out1 = client.embed_documents(["a", "b"])
+        out2 = client.embed_documents(["c", "d"])
+        client.embed_query("q")  # 查询同走 _embed 单入口——不得再打
+    assert all(d[0] == [0.1] * 4 or d[0] == [0.2] * 4 for d in out1)  # dense 不受影响
+    assert all(d[1] is None for d in (*out1, *out2))  # 数据形态不变、不拒收
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warns) == 1  # 单入口只打一次
+    assert "0/2" in warns[0].getMessage() and "sparse" in warns[0].getMessage()
+
+
+@respx.mock
+def test_sparse_present_no_warning(caplog):
+    """提供商实际返回 sparse → 无告警（观测语义：只对空置打 WARNING）。"""
+    respx.post(f"{BASE}/embeddings").mock(return_value=httpx.Response(200, json={"data": [
+        {"embedding": [0.1] * 4, "sparse_embedding": {"indices": [3], "values": [0.5]}}]}))
+    EmbeddingClient._sparse_zero_warned = False
+    client = make_client()
+    with caplog.at_level(logging.WARNING, logger="bidqa.clients.siliconflow"):
+        out = client.embed_documents(["a"])
+    assert out[0][1] is not None and out[0][1].indices == [3]
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
 
 
 @respx.mock

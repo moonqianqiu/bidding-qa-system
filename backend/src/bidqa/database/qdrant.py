@@ -90,7 +90,8 @@ class QdrantRepo:
     def upsert(self, chunks: list[Chunk], dense: list[list[float] | None],
                sparse: list[models.SparseVector | None],
                sparse_bm25: list[models.SparseVector]) -> int:
-        """三路向量写入；dense/sparse 允许 None（灾备模式只写 sparse_bm25）。"""
+        """三通道向量写入；dense/学习型 sparse 允许 None（None 跳过该通道——学习型
+        sparse 当前实测不返回，docs/01 §4.1 口径债；灾备模式只写 sparse_bm25）。"""
         points = []
         for i, c in enumerate(chunks):
             vectors: dict = {VECTOR_SPARSE_BM25: sparse_bm25[i]}

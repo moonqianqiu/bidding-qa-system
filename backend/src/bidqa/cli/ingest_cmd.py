@@ -13,6 +13,23 @@ from pathlib import Path
 from typing import Any
 
 
+def _channels_note(report: Any) -> str:
+    """按实际写入通道如实打印（NIGHT-045，docs/01 §4.1 口径债）：学习型 sparse
+    以提供商实际返回为准，不冒称「dense/sparse 已写」。"""
+    if report.upserted == 0:
+        return "无（全部拒收/空批次，未写入任何向量）"
+    if not report.embedded:
+        return "仅 sparse_bm25（BM25 灾备模式，dense/学习型 sparse 未写）"
+    if report.sparse_written <= 0:
+        return (f"dense+sparse_bm25（学习型 sparse 0/{report.upserted} 条："
+                "提供商未返回 sparse_embedding，通道跳过）")
+    if report.sparse_written >= report.upserted:
+        return (f"dense+sparse+sparse_bm25（学习型 sparse 全量 "
+                f"{report.sparse_written}/{report.upserted} 条）")
+    return (f"dense+sparse_bm25+学习型 sparse（{report.sparse_written}/"
+            f"{report.upserted} 条，部分返回）")
+
+
 def cmd_ingest(args, settings: Any) -> int:
     if args.ingest_target == "knowledge":
         return _ingest_knowledge(args)
@@ -49,7 +66,7 @@ def _ingest_knowledge(args) -> int:
     repo.ensure_collection()
     report = ingest_chunks(repo, chunks, build_embedding())
     print(f"入库完成：总 {report.total}，拒收 {len(report.rejected)}，"
-          f"写入 {report.upserted}，dense/sparse {'已写' if report.embedded else '未写（BM25 灾备模式）'}")
+          f"写入 {report.upserted}，写入通道 {_channels_note(report)}")
     print(f"集合 {repo.collection} 现有 {repo.count()} 点")
     return 0 if not report.rejected else 1
 
@@ -93,8 +110,7 @@ def _ingest_pdf(args, settings: Any) -> int:
     repo.ensure_collection()
     report = ingest_chunks(repo, chunks, build_embedding())
     print(f"入库完成：总 {report.total}，拒收 {len(report.rejected)}，"
-          f"写入 {report.upserted}，dense/sparse "
-          f"{'已写' if report.embedded else '未写（BM25 灾备模式）'}")
+          f"写入 {report.upserted}，写入通道 {_channels_note(report)}")
     for e in report.rejected[:10]:
         print(f"  ! {e}")
     print(f"集合 {repo.collection} 现有 {repo.count()} 点")

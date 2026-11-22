@@ -1,6 +1,8 @@
-"""F4：嵌入入库（docs/02 F4）——payload 校验拒收 + 三路向量写入 + 幂等批次。
+"""F4：嵌入入库（docs/02 F4）——payload 校验拒收 + 向量写入 + 幂等批次。
 
-灾备语义：嵌入 API 可用 → dense+sparse+sparse_bm25 三路；不可用 → 仅 sparse_bm25
+写入通道：schema 声明三路，实际 dense+sparse_bm25 必写；学习型 sparse 仅在
+提供商返回 sparse_embedding 时写（当前端点实测不返回，docs/01 §4.1 口径债）。
+灾备语义：嵌入 API 不可用 → 仅 sparse_bm25
 （拒绝整批写入，返回降级说明——保证集合内向量形态一致）。
 
 编码口径（审计 embed_store 债）：三条向量通道共用 `encode_text(chunk)`
@@ -31,8 +33,9 @@ from bidqa.rag.bm25 import sparse_bm25_doc, tokenize
 class IngestReport:
     total: int
     rejected: list[str]
-    embedded: bool      # dense+sparse 是否写入
+    embedded: bool      # dense 是否写入（嵌入 API 可用且有有效块）
     upserted: int
+    sparse_written: int = 0  # 学习型 sparse 实际写入条数（0=提供商未返回，通道跳过；NIGHT-045）
 
 
 def encode_text(chunk: Chunk) -> str:
@@ -76,4 +79,7 @@ def ingest_chunks(repo: QdrantRepo, chunks: list[Chunk],
         upserted += repo.upsert(
             part, dense[i:i + batch_size], sparse[i:i + batch_size], bm25,
         )
-    return IngestReport(total=total, rejected=rejected, embedded=use_dense, upserted=upserted)
+    # 学习型 sparse 实写条数（upsert 对 None 跳通道，database/qdrant.py——与落库一致）
+    sparse_written = sum(1 for s in sparse if s is not None) if use_dense else 0
+    return IngestReport(total=total, rejected=rejected, embedded=use_dense,
+                        upserted=upserted, sparse_written=sparse_written)
