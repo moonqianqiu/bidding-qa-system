@@ -21,7 +21,7 @@ from qdrant_client import models
 from bidqa.clients.siliconflow import DataSourceError, EmbeddingClient, RerankClient
 from bidqa.database.qdrant import QdrantRepo
 from bidqa.obs.tracing import set_attr, span
-from bidqa.rag.bm25 import sparse_bm25
+from bidqa.rag.bm25 import sparse_query
 from bidqa.rag.classify import classify
 
 PREFETCH_SIZE = 30        # prefetch_dense / prefetch_sparse
@@ -133,7 +133,7 @@ class Retriever:
                 degraded.append(f"embedding: {exc}")
         if q_dense is None and q_sparse is None:
             mode = "bm25_fallback"
-            points = self.repo.query_bm25(sparse_bm25(question), limit=top_k)
+            points = self.repo.query_bm25(sparse_query(question), limit=top_k)
             hits = [self._to_hit(p, None) for p in points]
         else:
             mode = "hybrid"

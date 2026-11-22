@@ -7,6 +7,15 @@
 （title + 可选 ctx_summary + text）——此前 dense/sparse 看 `ctx_summary+text`、
 sparse_bm25 看 `title+text`，同一 chunk 在不同通道检索语义漂移。既有集合需重新
 ingest 才与新口径一致（docs/01 §4.1）。
+
+sparse_bm25 文档侧烘焙（NIGHT-042 方案 B1，docs/01 §4.1 参数表）：值 =
+BM25 文档权重（tf 饱和 k1=1.5 + 长度归一 b=0.75），查询侧只发原始词频
+（rag/bm25.sparse_query），两侧点积 ≈ 无 IDF 的 BM25 分数。
+
+avgdl 口径与漂移治理：norm 依赖**全集合**平均词元数。全量 ingest=本批均值
+（即集合均值，精确）；增量 ingest 用本批均值近似、会使 avgdl 漂移——增量后跑
+一次通道重算归位（docs/部署手册 §3 数据面命令，scroll 全集合 payload 重分词
+重烘焙，纯本地 CPU、零 API 调用）。
 """
 
 from __future__ import annotations
@@ -15,7 +24,7 @@ from dataclasses import dataclass
 
 from bidqa.clients.siliconflow import DataSourceError, EmbeddingClient
 from bidqa.database.qdrant import Chunk, QdrantRepo, validate_chunk
-from bidqa.rag.bm25 import sparse_bm25
+from bidqa.rag.bm25 import sparse_bm25_doc, tokenize
 
 
 @dataclass
@@ -45,6 +54,10 @@ def ingest_chunks(repo: QdrantRepo, chunks: list[Chunk],
             valid.append(c)
 
     encode = [encode_text(c) for c in valid]
+    # avgdl：本批平均词元数（全量 ingest=集合均值；增量批次=近似，漂移后跑通道
+    # 重算归位——docs/部署手册 §3；见模块 docstring「avgdl 口径与漂移治理」）。
+    dl_list = [len(tokenize(s)) for s in encode]
+    avgdl = (sum(dl_list) / len(dl_list)) if dl_list else 0.0
     use_dense = embedding is not None and bool(valid)
     dense: list[list[float] | None] = [None] * len(valid)
     sparse: list[object | None] = [None] * len(valid)
@@ -59,7 +72,7 @@ def ingest_chunks(repo: QdrantRepo, chunks: list[Chunk],
     upserted = 0
     for i in range(0, len(valid), batch_size):
         part = valid[i:i + batch_size]
-        bm25 = [sparse_bm25(text) for text in encode[i:i + batch_size]]
+        bm25 = [sparse_bm25_doc(text, avgdl) for text in encode[i:i + batch_size]]
         upserted += repo.upsert(
             part, dense[i:i + batch_size], sparse[i:i + batch_size], bm25,
         )

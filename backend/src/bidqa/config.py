@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     CHAT_API_KEY: str = ""
     CHAT_MODEL: str = ""
     QDRANT_URL: str = ""
-    QDRANT_COLLECTION: str = "bidqa_knowledge_v1"  # 版本化集合名（docs/01 §4.1）
+    QDRANT_COLLECTION: str = "bidqa_knowledge_v2"  # 版本化集合名（docs/01 §4.1）；v2=sparse_bm25 烘焙 BM25 权重（NIGHT-042）。旧 .env 若写死 v1 仍兼容（回滚口，见 docs/01 §4.1）
     QDRANT_API_KEY: str = ""
 
     # ── 能力槽位（缺失=对应能力降级，启动成功）──

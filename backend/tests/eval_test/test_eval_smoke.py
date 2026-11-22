@@ -7,7 +7,7 @@ from qdrant_client import models
 
 from bidqa.database.qdrant import Chunk, QdrantRepo
 from bidqa.eval.smoke import run_smoke
-from bidqa.rag.bm25 import sparse_bm25
+from bidqa.rag.bm25 import sparse_bm25_doc, sparse_query
 from bidqa.rag.retrieve import Retriever
 
 
@@ -22,7 +22,7 @@ def env(tmp_path):
         Chunk(source_type="FAQ", title="单一来源可以联合体吗？",
               text="一般情况下不可以。", ctx_summary="单一来源可以联合体吗？", batch_id="b1"),
     ]
-    repo.upsert(chunks, [None] * 2, [None] * 2, [sparse_bm25(f"{c.title} {c.text}") for c in chunks])
+    repo.upsert(chunks, [None] * 2, [None] * 2, [sparse_bm25_doc(f"{c.title} {c.text}", avgdl=20.0) for c in chunks])
     golden = tmp_path / "rag_test.jsonl"
     cases = [
         {"id": "c1", "query_type": "rag_flow", "question": "中标通知书效力如何？",

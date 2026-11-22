@@ -141,3 +141,14 @@ def test_users_system_config_defaults():
                   GUEST_RATE_LIMIT=5, ADMIN_USERNAME="root", ADMIN_PASSWORD="x")
     assert (s2.USERS_ENABLED, s2.SESSION_TTL_HOURS, s2.GUEST_RATE_LIMIT) == (False, 24, 5)
     assert s2.ADMIN_USERNAME == "root" and s2.ADMIN_PASSWORD == "x"
+
+
+def test_collection_default_v2_baked_bm25():
+    """NIGHT-042：集合缺省切到 v2（sparse_bm25 烘焙 BM25 权重口径，docs/01 §4.1）。
+
+    向后兼容：旧 .env 若写死 v1 仍按显式配置生效（v1 集合保留即回滚口，
+    查询侧词频语义与 v1/v2 文档向量均自洽）。"""
+    assert Settings(_env_file=None).QDRANT_COLLECTION == "bidqa_knowledge_v2"
+    assert Settings(_env_file=None,
+                    QDRANT_COLLECTION="bidqa_knowledge_v1").QDRANT_COLLECTION == \
+        "bidqa_knowledge_v1"

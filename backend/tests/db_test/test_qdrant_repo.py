@@ -1,5 +1,7 @@
 """M1-1/F4：Qdrant 仓库层 + payload 校验（local mode，无需服务）。"""
 
+from typing import cast
+
 import pytest
 from qdrant_client import models
 
@@ -39,15 +41,72 @@ def repo():
 
 
 def test_upsert_bm25_only_and_query(repo):
-    from bidqa.rag.bm25 import sparse_bm25
+    from bidqa.rag.bm25 import sparse_bm25_doc, sparse_query
     chunks = [make_chunk(title=f"问题{i}", text=f"答案内容{i}关于单一来源采购") for i in range(3)]
     n = repo.upsert(chunks, [None] * 3, [None] * 3,
-                    [sparse_bm25(f"{c.title} {c.text}") for c in chunks])
+                    [sparse_bm25_doc(f"{c.title}\n{c.text}", avgdl=20.0) for c in chunks])
     assert n == 3 and repo.count() == 3
-    # BM25 灾备检索：入库与查询同一 crc32 索引空间 → 必有交集
-    points = repo.query_bm25(sparse_bm25("单一来源采购"), limit=2)
+    # BM25 灾备检索：文档侧烘焙权重、查询侧原始词频，同一 crc32 索引空间 → 必有交集
+    points = repo.query_bm25(sparse_query("单一来源采购"), limit=2)
     assert len(points) == 2
     assert all(p.payload["source_type"] == "FAQ" for p in points)
+
+
+def test_iter_points_full_scan_with_vectors(repo):
+    from bidqa.rag.bm25 import sparse_bm25_doc
+    chunks = [make_chunk(title=f"问题{i}", text=f"内容{i}") for i in range(2)]
+    vec = sparse_bm25_doc("问题0\n内容0", avgdl=10.0)
+    repo.upsert(chunks, [None] * 2, [None] * 2, [vec, vec])
+    got = list(repo.iter_points(with_vectors=True))
+    assert len(got) == 2
+    ids = {str(pid) for pid, _, _ in got}
+    assert ids == {c.id for c in chunks}
+    for _pid, payload, vectors in got:
+        assert payload["source_type"] == "FAQ"
+        assert vectors is not None and vectors["sparse_bm25"].indices == vec.indices
+
+
+def test_iter_points_payload_only(repo):
+    repo.upsert([make_chunk()], [None], [None],
+                [models.SparseVector(indices=[0], values=[1.0])])
+    got = list(repo.iter_points())
+    assert len(got) == 1 and got[0][2] is None  # with_vectors=False → vectors None
+
+
+# ── 版本化重建：同客户端多集合切换 + 验证后删旧（docs/01 §4.1 流程，NIGHT-042） ──
+
+def test_collection_version_switch_and_drop_old():
+    """切换演练：v1 导入 → v2 复制 → 验证（点数/可查/旧集合原样）→ 才删旧。
+
+    回滚语义：删旧之前 v1 全程可用——删除动作必须放在全部验证断言之后。
+    """
+    from bidqa.rag.bm25 import sparse_bm25_doc, sparse_query
+    from qdrant_client import QdrantClient
+
+    client = QdrantClient(":memory:")
+    old = QdrantRepo(url="", collection="t_switch_v1", client=client)
+    old.ensure_collection()
+    chunks = [make_chunk(title=f"问题{i}", text=f"答案{i}关于单一来源采购") for i in range(3)]
+    old.upsert(chunks, [None] * 3, [None] * 3,
+               [sparse_bm25_doc(f"{c.title}\n{c.text}", avgdl=15.0) for c in chunks])
+
+    new = QdrantRepo(url="", collection="t_switch_v2", client=client)
+    new.ensure_collection()
+    copied = 0
+    for pid, payload, vectors in old.iter_points(with_vectors=True):
+        vecs = cast(dict, vectors)  # qdrant-client vector 联合类型，测试收窄
+        copied += new.upsert_raw([models.PointStruct(
+            id=pid, vector={"sparse_bm25": vecs["sparse_bm25"]}, payload=payload)])
+
+    # 验证阶段：点数一致、新集合可查、旧集合原样可查（回滚窗口未关闭）
+    assert copied == 3 and new.count() == old.count() == 3
+    assert len(new.query_bm25(sparse_query("单一来源采购"), limit=3)) == 3
+    assert len(old.query_bm25(sparse_query("单一来源采购"), limit=3)) == 3
+
+    # 全部验证通过后才允许删旧
+    old.drop_collection()
+    assert not client.collection_exists("t_switch_v1")
+    assert new.count() == 3
 
 
 def test_existing_ids(repo):

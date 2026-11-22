@@ -212,7 +212,7 @@ def test_console_aggregate_shape(settings_factory, monkeypatch):
     data = r.json()
     assert data["pg"] == {"bidding_procurement": 8489, "conversations": 2,
                           "feedback": 0, "users": 1}
-    assert data["qdrant"] == {"vectors": 123, "collection": "bidqa_knowledge_v1"}
+    assert data["qdrant"] == {"vectors": 123, "collection": "bidqa_knowledge_v2"}  # NIGHT-042：默认集合切 v2（烘焙 BM25 口径）
     assert data["neo4j"]["total"] == 18528  # 8489+2188+4001+3504+306+40
     assert set(data["neo4j"]["labels"]) == {"Project", "SubjectMatter", "Supplier",
                                             "Purchaser", "Agency", "Location"}

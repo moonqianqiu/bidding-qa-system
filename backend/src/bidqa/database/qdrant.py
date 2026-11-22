@@ -1,8 +1,8 @@
 """Qdrant 仓库层（docs/01 §4.1）：版本化集合 + 三路 Named Vectors + payload 校验。
 
-集合命名带版本（bidqa_knowledge_v1），重建=新集合导入→原子切换配置→删旧，
+集合命名带版本（当前 bidqa_knowledge_v2），重建=新集合导入→原子切换配置→删旧，
 禁止原地清空重建。三路向量：dense(bge-m3 1024 COSINE) + sparse(bge-m3 学习型)
-+ sparse_bm25(jieba 灾备，ingest 双写)。
++ sparse_bm25(jieba 灾备：文档侧烘焙 BM25 权重、查询侧发原始词频，NIGHT-042)。
 """
 
 from __future__ import annotations
@@ -57,9 +57,12 @@ def validate_chunk(chunk: Chunk) -> str | None:
 class QdrantRepo:
     """单集合仓库；所有网络调用 trust_env=False（不吃代理环境变量）。"""
 
-    def __init__(self, url: str, collection: str, api_key: str = "", timeout: float = 10.0):
+    def __init__(self, url: str, collection: str, api_key: str = "", timeout: float = 10.0,
+                 client: QdrantClient | None = None):
         self.collection = collection
-        if url == ":memory:":  # 测试模式：进程内实例
+        if client is not None:  # 注入共享实例（测试：同客户端多集合切换/回滚演练）
+            self._client = client
+        elif url == ":memory:":  # 测试模式：进程内实例
             self._client = QdrantClient(":memory:")
         else:
             self._client = QdrantClient(
@@ -107,8 +110,43 @@ class QdrantRepo:
         self._client.upsert(collection_name=self.collection, points=points, wait=True)
         return len(points)
 
+    def upsert_raw(self, points: list[models.PointStruct]) -> int:
+        """原样写入预构造点（版本化重建脚本专用，NIGHT-042）。
+
+        与 upsert（Chunk→向量/payload 组装）分工：重建时 dense/sparse/payload
+        必须与旧集合逐分量相等，任何重新组装/默认值都可能引入漂移——只收
+        PointStruct，id/payload/向量逐字复制。
+        """
+        if not points:
+            return 0
+        self._client.upsert(collection_name=self.collection, points=points, wait=True)
+        return len(points)
+
     def count(self) -> int:
         return self._client.count(self.collection, exact=True).count
+
+    def iter_points(self, with_vectors: bool = False, batch: int = 256):
+        """全集合只读滚动：逐批 yield (id, payload, vectors|None)。
+
+        版本化重建/通道重算脚本的数据源（docs/01 §4.1：建新集合→导入→原子切换→
+        删旧）；with_vectors=True 时 vectors 为 {name: 向量}（dense/sparse 原样
+        复制，sparse_bm25 重算）。
+        """
+        offset = None
+        while True:
+            points, offset = self._client.scroll(
+                collection_name=self.collection, limit=batch, offset=offset,
+                with_payload=True, with_vectors=with_vectors,
+            )
+            for p in points:
+                yield p.id, (p.payload or {}), p.vector
+            if offset is None:
+                break
+
+    def drop_collection(self) -> None:
+        """删除当前集合（不可逆）。仅用于版本化流程「验证通过后删旧」一步；
+        调用方负责保留回滚窗口（NIGHT-042：旧集合验证期不删）。"""
+        self._client.delete_collection(self.collection)
 
     def existing_ids(self, ids: list[str]) -> set[str]:
         if not ids:

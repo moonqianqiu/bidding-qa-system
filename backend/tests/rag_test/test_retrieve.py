@@ -4,7 +4,7 @@ import pytest
 from qdrant_client import models
 
 from bidqa.database.qdrant import Chunk, QdrantRepo
-from bidqa.rag.bm25 import sparse_bm25
+from bidqa.rag.bm25 import sparse_bm25_doc, sparse_query
 from bidqa.rag.retrieve import Retriever
 
 
@@ -22,7 +22,7 @@ def retriever():
         Chunk(source_type="FAQ", title="传感器有哪些品牌？",
               text="中国电科等。", ctx_summary="传感器有哪些品牌？", batch_id="b1"),
     ]
-    repo.upsert(chunks, [None] * 3, [None] * 3, [sparse_bm25(f"{c.title} {c.text}") for c in chunks])
+    repo.upsert(chunks, [None] * 3, [None] * 3, [sparse_bm25_doc(f"{c.title} {c.text}", avgdl=20.0) for c in chunks])
     yield Retriever(repo, embedding=None, reranker=None)
     repo.close()
 
@@ -76,7 +76,7 @@ def hybrid_repo():
               models.SparseVector(indices=[1], values=[0.9]),
               models.SparseVector(indices=[2], values=[0.8])]
     repo.upsert(chunks, dense, sparse,
-                [sparse_bm25(f"{c.title} {c.text}") for c in chunks])
+                [sparse_bm25_doc(f"{c.title} {c.text}", avgdl=20.0) for c in chunks])
     yield repo
     repo.close()
 
