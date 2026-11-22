@@ -17,6 +17,7 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -27,7 +28,7 @@ jobs:
       - name: 后端测试（PG/Neo4j 无服务时集成用例自动 skip）
         run: |
           set +e
-          uv run pytest -q > /tmp/pytest.log 2>&1
+          uv run --with pytest-timeout pytest -q --timeout=120 -x > /tmp/pytest.log 2>&1
           rc=$?
           if [ $rc -ne 0 ]; then
             tail -n 80 /tmp/pytest.log | while IFS= read -r line; do echo "::error::$line"; done
