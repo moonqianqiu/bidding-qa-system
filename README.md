@@ -90,6 +90,6 @@ cd backend && uv run bidqa eval --golden ../eval/golden/agent_v0.jsonl --mode ag
 ```
 
 - 量化验收线（[docs/02 §0.1](./docs/02_功能结构细化.md)）：工具选择 ≥90% · hit_cap <10% · 澄清 100% 触发 · 检索 P95 ≤1.5s
-- 版本标签：`v0.1-scaffold` → `v0.2-m2` → `v0.3-m3` → `v1.0` →（重构线）`v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` → `v2.3-dual-vision` → `v2.4-audit-repair`（2026-11-16）→ `v2.5`（2026-11-21）
+- 版本标签：`v0.1-scaffold` → `v0.2-m2` → `v0.3-m3` → `v1.0` →（重构线）`v1.0-baseline` → `v2.0-refactored` → `v2.1-kg-normalize` → `v2.2-structure-cleanup` → `v2.3-dual-vision` → `v2.4-audit-repair`（2026-11-16）→ `v2.5`（2026-11-21）→ `v2.6`（2026-11-23 检索通道收口）→ `v2.7`（2026-11-23 自建 bge-m3 / sparse 启用）
 - 测试计数与质量快照以 [AI交接文档 §2](./docs/AI交接文档.md) 为唯一口径（避免本文与实跑漂移）
 - 文档机械审计：`bash .auto/measure.sh`（doc_defects 应为 0）
