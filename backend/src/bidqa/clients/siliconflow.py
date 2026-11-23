@@ -1,11 +1,13 @@
-"""SiliconFlow bge-m3 嵌入与重排客户端（docs/01 clients 层；E2/E4）。
+"""bge-m3 嵌入与重排客户端（docs/01 clients 层；E2/E4）。
 
 约定：查询与文档走同一 API 入口（单测锁定，保证分数可比）；批量、重试、限流退避；
-trust_env=False。bge-m3 模型卡宣传稠密 1024 + 学习型稀疏一次返回，**当前公开端点
-实测不交付**：/embeddings 响应缺省无 `sparse_embedding` 键（NIGHT-040 旁挂取证
-20/20 仅 embedding/index/object，docs/01 §4.1 口径债）——客户端按 None 降级，
-学习型 sparse 仅在提供商实际返回时参与；本批占比为 0 时打一次 WARNING（NIGHT-045
-可观测性，不拒收、不改返回形态）。
+trust_env=False。**端点是否交付学习型稀疏由端点决定**：
+- 自建 bge-m3（SLali L20:8002，2026-11-23 起，NIGHT-065）：加载 `sparse_linear.pt` 线性头，
+  `embedding` + `sparse_embedding` 一次返回——`sparse` 通道三路全量落库；
+- 第三方端点（SiliconFlow）：`/embeddings` 响应缺省无 `sparse_embedding` 键（NIGHT-040
+  旁挂取证 20/20 仅 embedding/index/object）——客户端按 None 降级、ingest 跳过 `sparse` 通道，
+  hybrid 退化为 dense 单路；本批占比为 0 时打一次 WARNING（NIGHT-045 可观测性，不拒收、不改返回形态）。
+换端点只改 `EMBEDDING_*` 配置，不改代码。
 """
 
 from __future__ import annotations
@@ -57,8 +59,8 @@ def _post_with_retry(client: httpx.Client, url: str, payload: dict,
 
 
 class EmbeddingClient:
-    """bge-m3：稠密 1024 必返；学习型稀疏仅当响应含 sparse_embedding（当前端点
-    实测不返回，docs/01 §4.1 口径债）。embed_documents 与 embed_query 调同一 _embed。"""
+    """bge-m3：稠密 1024 必返；学习型稀疏当响应含 sparse_embedding 时取用（自建端点恒返回；
+    第三方端点可能缺该键 → None 降级）。embed_documents 与 embed_query 调同一 _embed。"""
 
     # NIGHT-045：单入口（_embed）进程级只打一次 sparse 空置 WARNING——查询/逐批不刷屏
     _sparse_zero_warned: bool = False
@@ -103,7 +105,7 @@ class EmbeddingClient:
             EmbeddingClient._sparse_zero_warned = True
             logger.warning(
                 "sparse 观测：本批 0/%d 条 item 返回 sparse_embedding（占比 0%%）"
-                "——学习型 sparse 通道不写入，hybrid 退化为 dense 单路（docs/01 §4.1 口径债）",
+                "——学习型 sparse 通道不写入，hybrid 退化为 dense 单路（换端点/换集合后出现即核查配置）",
                 total)
         return out
 

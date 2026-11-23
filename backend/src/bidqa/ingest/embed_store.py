@@ -1,7 +1,8 @@
 """F4：嵌入入库（docs/02 F4）——payload 校验拒收 + 向量写入 + 幂等批次。
 
-写入通道：schema 声明三路，实际 dense+sparse_bm25 必写；学习型 sparse 仅在
-提供商返回 sparse_embedding 时写（当前端点实测不返回，docs/01 §4.1 口径债）。
+写入通道：三路（dense / 学习型 sparse / sparse_bm25）。dense+sparse_bm25 必写；
+学习型 sparse 在提供商返回 sparse_embedding 时写——自建 bge-m3（NIGHT-065）恒返回，
+第三方端点可能缺该键（客户端降级 + 一次 WARNING，docs/01 §4.1）。
 灾备语义：嵌入 API 不可用 → 仅 sparse_bm25
 （拒绝整批写入，返回降级说明——保证集合内向量形态一致）。
 
@@ -11,7 +12,7 @@ sparse_bm25 看 `title+text`，同一 chunk 在不同通道检索语义漂移。
 ingest 才与新口径一致（docs/01 §4.1）。
 
 sparse_bm25 文档侧烘焙（NIGHT-042 方案 B1，docs/01 §4.1 参数表）：值 =
-BM25 文档权重（tf 饱和 k1=1.5 + 长度归一 b=0.75），查询侧只发原始词频
+BM25 文档权重（tf 饱和 k1=1.5 + 长度归一 b=0.5，NIGHT-062），查询侧只发原始词频
 （rag/bm25.sparse_query），两侧点积 ≈ 无 IDF 的 BM25 分数。
 
 avgdl 口径与漂移治理：norm 依赖**全集合**平均词元数。全量 ingest=本批均值

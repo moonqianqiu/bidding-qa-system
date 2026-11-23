@@ -14,8 +14,8 @@ from typing import Any
 
 
 def _channels_note(report: Any) -> str:
-    """按实际写入通道如实打印（NIGHT-045，docs/01 §4.1 口径债）：学习型 sparse
-    以提供商实际返回为准，不冒称「dense/sparse 已写」。"""
+    """按实际写入通道如实打印（NIGHT-045）：学习型 sparse 以提供商实际返回为准，
+    不冒称「dense/sparse 已写」（自建端点全量 792/792，第三方端点常为 0）。"""
     if report.upserted == 0:
         return "无（全部拒收/空批次，未写入任何向量）"
     if not report.embedded:
