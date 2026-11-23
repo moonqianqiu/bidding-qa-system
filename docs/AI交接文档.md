@@ -55,13 +55,14 @@
 | **Agent 评测批量复测报价（待批）** | 🟡 付费待批 | ①40 例基线批复测（验证 ag-010 修复后门禁）：报价 **142~178 次主模型调用 / 17.5~22.0 分钟 / 判分 0**，待用户批准付费；②能力批 `--plan --reflect` **已跑**（2026-11-21，`agent_20261121_1e94a51_deepseek-flash.json`）：39/40、三门槛全过、plan_rate 0.175 / reflected_count 29；ag-016 按 ANY-of 口径离线重算 **40/40**；ag-010 转 PASS |
 | **停机演练复验（NIGHT-002）** | ✅ 2026-11-21（②③④ 全 PASS；①已随 P1-8 收口） | ②强停后无残留进程、③重启后 /api/health 六组件全 ok、④数据面 PG 8,489 / 图谱节点 18,519 / 边 34,800 不变；①SSE 5031 广播原为**结构性失败**（非偶发）——根因与修复见下行 P1-8（uvicorn 0.54 停机时序：先等连接收尾/超时 cancel、之后才跑 lifespan，广播空投）。**遗留**：真控制台复验属用户侧（PTY 下 os.kill/广播式信号不可达，但 NIGHT-013 的定向组投递实测可达） |
 | **P1-8 广播可达性修复** | ✅ 2026-11-21（af5031c；682 passed） | 方案=`cli/serve.BidqaServer.shutdown()` 入口**先 `broadcast_shutdown()` 再 super()**（主投递点前移到 uvicorn 停机等待之前），`main.py` 停机四步保留兜底（口径见 docs/01 §6）；端到端演练（进程内信号路径）：信号后 0.13s 客户端收到 error 5031、干净 EOF、退出码 3（uvicorn 重放 SIGBREAK 的环境默认，已对照解释）；新增真实 uvicorn+TCP SSE 回归测试（+2）。**遗留（已清）**：`deploy/stop.sh` 已改优雅先行（NIGHT-013，定向 CTRL_BREAK 实测送达）、退出码已归零（b5a23b9：优雅 0 / force 130） |
+| **图谱定位（2026-11-23 用户拍板）** | ✅ 保留，不裁剪（功能完整性优先） | 七类查询模板均为单跳/两跳聚合，**结果与 PG `GROUP BY`/`JOIN` 等价**：同一聚合两边 top-3 完全一致、PG 5~9ms vs Neo4j 8~20ms（只读对拍脚本 `data/run/night066/graph_vs_pg.py`）；唯一两跳 `subject_supplier` 亦等价于 SQL join。**决策**：保留图谱与七类模板——实践项目需具备图谱能力，「缺参标名单等 M:N 数据」是前提而非缺陷；**不追加图特有算法、不做重建管线改造**（拿到 M:N 数据再拍板）。已知口径风险：跨批次同号项目 subject 分歧会让 FOR 双挂 → `subject_supplier` double-count；图谱为 PG 派生副本，对账靠六类节点/五类边计数与 PG 行数逐项比对。；**多跳表达优势实测**（`data/run/night066/hop_cost_sets.py`）：约束落在不同项目时，Cypher 4 段 MATCH vs SQL 4 引用+`INTERSECT`，两边同为 26 家（9.7ms vs 6.8ms）——优势在写法不在速度；现有七类模板尚未用到该空间。细节见 `docs/01` §4.2「定位与边界」 |
 | **golden 修订（2026-11-21 用户拍板）** | ✅ 已修 | ①ag-016 改 ANY-of（`search_database`/`search_graph`，图谱 purchaser_dist 归一后口径亦合法）——能力批快照离线重算 **40/40**；②ag-002 `ref_sources` 由「民营博物馆」错指改为 `260593c0`（问题逐字精确命中）；③ag-001 `ref_sources` 置空并加 note（原指向「异议被驳回」FAQ 与问题无文本交集，疑似编写错位；待语料重 ingest 后按新 chunk 补齐）。检索类指标在语料到位前按「ref 全集」口径解读 |
 
 ## 4. 环境与数据速览
 
 - **配置**：`backend/.env`（**用户自己管**，别代改；2026-11-14 从旧仓逐字节复制，但 11-15 起用户已自行改过判分模型名、`ONLINE_EVAL_*`、`SUBJECT_BATCH_BASE_URL`——md5 已不再与旧仓一致，以文件实读为准）。三槽位 `CHAT_/VISION_/JUDGE_*`；v2.3 增 `OCR_*`（能力型，未配置=图片自动路由退化为 Qwen 通用描述）；
   `SUBJECT_BATCH_*`=数据加工批量通道（subject-batch 与图谱归一默认通道）；
-  `EMBEDDING_/RERANK_`=SiliconFlow；`WEB_SEARCH_PROVIDERS`=联网名册（留空=关）；`CHAT_PROFILES`=命名档；
+  `EMBEDDING_`=**自建 bge-m3**（SLali L20:8002，2026-11-23 起，`deploy/emb/`，恒返回 dense+学习型 sparse）、`RERANK_`=SiliconFlow；`WEB_SEARCH_PROVIDERS`=联网名册（留空=关）；`CHAT_PROFILES`=命名档；
   `CHAT_MAX_TOKENS`=8192（思考型上游先烧 reasoning，预算不足正文空）；`USERS_ENABLED`=true（admin/admin123 种子，**建议改密**）。
   配置语义以 `docs/01` §5 为准
 - **服务**：8000 后端 / 3000 前端 dev / 5432 PG / 6333 Qdrant / 7474+7687 Neo4j（当前从**新仓**跑：C9 已切换）
