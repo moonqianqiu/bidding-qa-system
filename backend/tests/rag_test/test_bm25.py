@@ -40,11 +40,11 @@ def test_query_different_texts_differ():
 # ── 文档侧：烘焙 BM25 权重 ──
 
 def test_doc_weight_formula_anchors():
-    """烘焙公式手工值（k1=1.5、b=0.75；docs/01 §4.1 参数表）。"""
+    """烘焙公式手工值（k1=1.5、b=0.5；docs/01 §4.1 参数表）。"""
     assert doc_weight(1.0, 8, 8) == pytest.approx(1.0)  # dl=avgdl & tf=1 → 词频锚点
     assert doc_weight(10.0, 8, 8) == pytest.approx(10 * 2.5 / (10 + 1.5))   # tf 饱和
-    assert doc_weight(1.0, 16, 8) == pytest.approx(2.5 / (1 + 1.5 * 1.75))  # 长块 dl=2·avgdl 被压
-    assert doc_weight(1.0, 4, 8) == pytest.approx(2.5 / (1 + 1.5 * 0.625))  # 短块 dl=0.5·avgdl 被抬
+    assert doc_weight(1.0, 16, 8) == pytest.approx(2.5 / (1 + 1.5 * 1.5))   # 长块 dl=2·avgdl 被压（norm=1-0.5+0.5*2）
+    assert doc_weight(1.0, 4, 8) == pytest.approx(2.5 / (1 + 1.5 * 0.75))   # 短块 dl=0.5·avgdl 被抬（norm=1-0.5+0.5*0.5）
     assert doc_weight(2.0, 3, 0) == pytest.approx(2 * 2.5 / (2 + 1.5))  # avgdl 退化（≤0）：norm=1 不除零
 
 

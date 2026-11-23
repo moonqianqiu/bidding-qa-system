@@ -24,7 +24,8 @@ from qdrant_client import models
 _MAX_INDEX = 2 ** 31 - 1  # Qdrant 稀疏索引为 u32，取安全上限
 
 DEFAULT_K1 = 1.5  # tf 饱和强度（NIGHT-037 §4.3 敏感性网格：R@10 恒 1.0）
-DEFAULT_B = 0.75  # 长度归一强度（同上，标准值）
+DEFAULT_B = 0.5  # 长度归一强度（NIGHT-062：0.75 下超短查询被同页短块压过，rag_faq_015 失分；
+                 # 全库模拟 b∈[0.4,0.6] 三金集全满分且零回归，取居中 0.5）
 
 
 def tokenize(text: str) -> list[str]:
